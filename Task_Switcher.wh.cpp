@@ -19,12 +19,6 @@ A modern, fluid and highly visual replacement for the native Windows Alt+Tab exp
 
 Built from scratch in native C++ as a project to explore Windows APIs, graphics, animation systems and desktop customization. You can also see the original [GITHUB REPOSITORY](https://github.com/IMiloDev/OverhauldedWin) to send me issues.
 
-> **⚠️ DISCLAIMER**
->
-> When an **elevated window** is focused, the `explorer.exe` component forwards the shell's Alt+Tab hotkey to the switcher. If the hotkey cannot be forwarded, the native Windows switcher remains available.
->
-> [Read how elevated-window switching works →](#elevated-window-input)
-
 ## Screenshot
 
 ![OverhauldedWin Task Switcher](https://raw.githubusercontent.com/IMiloDev/OverhauldedWin/main/assets/icons/task-manager.jpg)
@@ -101,17 +95,6 @@ The architecture separates Explorer's shell-hotkey forwarding, modifier-state po
 
 ---
 
-# IMPORTANT
-
-Overhaulded is still a pre-release project.
-
-Some applications may behave differently than standard desktop windows, especially those using unusual window structures, custom rendering, or multiple processes.
-
-### Elevated Window Input
-
-The `explorer.exe` component hooks the Immersive Shell thread's message queue with `WH_GETMESSAGE`. When it sees the shell's Alt+Tab `WM_HOTKEY`, it forwards the hotkey to the switcher and replaces the original message with `WM_NULL` only after forwarding succeeds. This is the path that allows the switcher to open while an elevated window has focus, including on Windhawk 1.7.3. If the forwarder is unavailable or cannot deliver the hotkey, the native Windows switcher remains the fallback.
-
----
 
 ## Controls
 
@@ -163,8 +146,9 @@ This project is licensed under the **MIT License**.
 See the https://github.com/IMiloDev/OverhauldedWin/blob/main/LICENSE file for the complete license text.
 
 ---
+Overhaulded is still a pre-release project.
 
-> Made by Milo.
+Some applications may behave differently than standard desktop windows, especially those using unusual window structures, custom rendering, or multiple processes.
 
 ![OverhauldedWin Task Switcher](https://raw.githubusercontent.com/IMiloDev/OverhauldedWin/main/assets/icons/preview.gif)
 */
