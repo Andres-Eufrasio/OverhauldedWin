@@ -7,7 +7,6 @@
 // @github          https://github.com/IMiloDev
 // @homepage        https://github.com/IMiloDev/OverhauldedWin
 // @include         windhawk.exe
-// @include         windhawk-mod.exe
 // @include         explorer.exe
 // @compilerOptions -lshell32
 // ==/WindhawkMod==
@@ -19,6 +18,12 @@
 A modern, fluid and highly visual replacement for the native Windows Alt+Tab experience.
 
 Built from scratch in native C++ as a project to explore Windows APIs, graphics, animation systems and desktop customization. You can also see the original [GITHUB REPOSITORY](https://github.com/IMiloDev/OverhauldedWin) to send me issues.
+
+> **⚠️ DISCLAIMER**
+>
+> When an **elevated window** is focused, the `explorer.exe` component forwards the shell's Alt+Tab hotkey to the switcher. If the hotkey cannot be forwarded, the native Windows switcher remains available.
+>
+> [Read how elevated-window switching works →](#elevated-window-input)
 
 ## Screenshot
 
@@ -96,6 +101,17 @@ The architecture separates Explorer's shell-hotkey forwarding, modifier-state po
 
 ---
 
+# IMPORTANT
+
+Overhaulded is still a pre-release project.
+
+Some applications may behave differently than standard desktop windows, especially those using unusual window structures, custom rendering, or multiple processes.
+
+### Elevated Window Input
+
+The `explorer.exe` component hooks the Immersive Shell thread's message queue with `WH_GETMESSAGE`. When it sees the shell's Alt+Tab `WM_HOTKEY`, it forwards the hotkey to the switcher and replaces the original message with `WM_NULL` only after forwarding succeeds. This is the path that allows the switcher to open while an elevated window has focus, including on Windhawk 1.7.3. If the forwarder is unavailable or cannot deliver the hotkey, the native Windows switcher remains the fallback.
+
+---
 
 ## Controls
 
@@ -147,9 +163,8 @@ This project is licensed under the **MIT License**.
 See the https://github.com/IMiloDev/OverhauldedWin/blob/main/LICENSE file for the complete license text.
 
 ---
-Overhaulded is still a pre-release project.
 
-Some applications may behave differently than standard desktop windows, especially those using unusual window structures, custom rendering, or multiple processes.
+> Made by Milo.
 
 ![OverhauldedWin Task Switcher](https://raw.githubusercontent.com/IMiloDev/OverhauldedWin/main/assets/icons/preview.gif)
 */
@@ -799,9 +814,9 @@ struct UserWindowInfo
 
 // ARQUITECTURA DE HILOS
 //
-//  Input thread : dueño de WH_KEYBOARD_LL y WH_MOUSE_LL. Los callbacks solo
-//                 actualizan estado atómico/local y publican comandos al UI
-//                 thread con PostThreadMessage. Nada más.
+//  Input thread : dueño de WH_MOUSE_LL (solo mientras el selector está
+//                 interactivo), del hotkey reenviado y del polling de
+//                 modificadores. El teclado del selector se procesa en su WndProc.
 //  UI thread    : dueño del HWND del selector, D2D/DWrite/GDI/DWM,
 //                 animaciones, timers, WinEvent hook, enumeración de ventanas,
 //                 iconos, información de procesos y activación de ventanas.
@@ -823,7 +838,6 @@ static volatile LONG g_uiInitOk = 0;
 static volatile LONG g_shutdownRequested = 0;
 
 // Solo input thread.
-static HHOOK g_keyboardHook = nullptr;
 static HHOOK g_mouseHook = nullptr;
 static HWND volatile g_inputControlWnd = nullptr;   // ventana message-only
 
@@ -842,8 +856,6 @@ static volatile LONG g_mouseMovePending = 0;
 
 // Comandos input -> UI (PostThreadMessage) y UI -> input (ventana de control).
 static const UINT WM_UI_OPEN = WM_APP + 1;         // wParam=sessionId, lParam=shift
-static const UINT WM_UI_TAB_DOWN = WM_APP + 2;     // wParam=sessionId, lParam=shift
-static const UINT WM_UI_TAB_UP = WM_APP + 3;       // wParam=sessionId
 static const UINT WM_UI_NAVIGATE = WM_APP + 4;     // wParam=sessionId, lParam=+1/-1
 static const UINT WM_UI_CONFIRM = WM_APP + 5;      // wParam=sessionId
 static const UINT WM_UI_CANCEL = WM_APP + 6;       // wParam=sessionId
@@ -1337,12 +1349,7 @@ static bool g_altLeftDown = false;
 static bool g_altRightDown = false;
 static bool g_ctrlLeftDown = false;
 static bool g_ctrlRightDown = false;
-static bool g_tabDown = false;
 static bool g_altGrActive = false;
-static bool g_tabSuppressed = false;
-// Se arma únicamente cuando AltGr+Tab pertenece a nuestro selector; permite
-// bloquear Ctrl+Alt+Flecha antes de que el selector termine de mostrarse.
-static bool g_altGrTaskSwitcherArmed = false;
 static bool g_altMenuMaskPending = false;
 
 // UTILIDADES DE ESTADO
@@ -1368,7 +1375,7 @@ static void PostInputControl(UINT message, WPARAM wParam)
 }
 
 // El UI thread activa/desactiva la interacción de ratón; el input thread
-// instala el WH_MOUSE_LL solo mientras el selector acepta interacción.
+// instala WH_MOUSE_LL solo mientras el selector acepta interacción.
 static void UiSetInteractive(bool on)
 {
     LONG next = on ? 1 : 0;
@@ -1408,18 +1415,16 @@ static void MarkSelectorActivity()
     g_lastSelectorActivity = GetTickCount64();
 }
 
-// Estado del teclado del input thread. Se sincroniza de GetAsyncKeyState solo al
-// iniciar; después se mantiene únicamente con los eventos del hook.
+// Estado físico de los modificadores, actualizado al iniciar y por el sondeo
+// periódico de la sesión (no depende de eventos de teclado globales).
+static bool IsAltGrPhysicallyDown();
 static void InputResetKeyboardState()
 {
     g_altLeftDown = (GetAsyncKeyState(VK_LMENU) & 0x8000) != 0;
     g_altRightDown = (GetAsyncKeyState(VK_RMENU) & 0x8000) != 0;
     g_ctrlLeftDown = (GetAsyncKeyState(VK_LCONTROL) & 0x8000) != 0;
     g_ctrlRightDown = (GetAsyncKeyState(VK_RCONTROL) & 0x8000) != 0;
-    g_tabDown = false;
-    g_altGrActive = false;
-    g_tabSuppressed = false;
-    g_altGrTaskSwitcherArmed = false;
+    g_altGrActive = IsAltGrPhysicallyDown();
     g_altMenuMaskPending = false;
     g_sessionModifier = ModifierSession::None;
     g_inputSessionId = 0;
@@ -1430,41 +1435,11 @@ static bool IsAltGrPhysicallyDown()
     return g_altRightDown && (g_ctrlLeftDown || g_ctrlRightDown);
 }
 
-// Reconcile cached hook state against the actual keyboard state. If a burst of
-// input caused a modifier key-up callback to be missed, stale Alt/AltGr state
-// must not make a later bare Tab start (or keep navigating) the selector.
-static bool InputSessionActive();
-static void SendAltMenuMaskIfNeeded();
-static void OnModifierReleased();
-
-static void InputReconcileModifiersFromSystem()
-{
-    const bool hadAlt = g_altLeftDown || g_altRightDown;
-
-    g_altLeftDown = (GetAsyncKeyState(VK_LMENU) & 0x8000) != 0;
-    g_altRightDown = (GetAsyncKeyState(VK_RMENU) & 0x8000) != 0;
-    g_ctrlLeftDown = (GetAsyncKeyState(VK_LCONTROL) & 0x8000) != 0;
-    g_ctrlRightDown = (GetAsyncKeyState(VK_RCONTROL) & 0x8000) != 0;
-    g_altGrActive = IsAltGrPhysicallyDown();
-
-    // A missed Alt key-up can also leave Windows' system-menu state unmasked.
-    if (hadAlt && !g_altLeftDown && !g_altRightDown)
-        SendAltMenuMaskIfNeeded();
-
-    if (!g_altGrActive && !InputSessionActive())
-        g_altGrTaskSwitcherArmed = false;
-}
-
 static void ClearSelectorKeyboardSession()
 {
-    g_tabDown = false;
-    g_tabSuppressed = false;
     g_sessionModifier = ModifierSession::None;
     g_inputSessionId = 0;
     g_altGrActive = IsAltGrPhysicallyDown();
-    // Si AltGr sigue físicamente pulsado, Ctrl+Alt+Flecha debe seguir bloqueado
-    // hasta soltarlo (p. ej. tras Esc); se desarma en el keyup del modificador.
-    g_altGrTaskSwitcherArmed = g_altGrTaskSwitcherArmed && g_altGrActive;
 }
 
 // Solo UI thread: reconcilia el estado visual/temporizado al cerrar.
@@ -5613,6 +5588,74 @@ static LRESULT CALLBACK SelectorWndProc(HWND hwnd, UINT message, WPARAM wParam, 
         UpdateSelectorControls();
         return 0;
 
+    // Keyboard input is handled only while this selector owns the foreground.
+    // Explorer forwards Alt+Tab to start/navigate sessions; these window messages
+    // handle subsequent navigation and confirmation without a desktop-wide hook.
+    case WM_KEYDOWN:
+    case WM_SYSKEYDOWN:
+    {
+        if (!IsSelectorActuallyActive() || g_cleanupInProgress)
+            break;
+
+        MarkSelectorActivity();
+        switch (wParam)
+        {
+        case VK_TAB:
+            if (!g_uiTabDown)
+            {
+                const bool shiftDown =
+                    (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+                if (shiftDown) SelectPrevious();
+                else SelectNext();
+                g_uiTabDown = true;
+                g_tabRepeatStarted = false;
+                SetTimer(hwnd, kTabRepeatTimerId, kTabRepeatInitialDelayMs, nullptr);
+            }
+            return 0;
+        case VK_LEFT:
+            SelectPrevious();
+            return 0;
+        case VK_RIGHT:
+            SelectNext();
+            return 0;
+        case VK_RETURN:
+            ConfirmSelection();
+            return 0;
+        case VK_ESCAPE:
+            CancelSelection();
+            return 0;
+        default:
+            // While the selector is active, do not let unrelated keys trigger
+            // default window/menu behavior.
+            return 0;
+        }
+    }
+
+    case WM_KEYUP:
+    case WM_SYSKEYUP:
+    {
+        if (!IsSelectorActuallyActive())
+            break;
+        MarkSelectorActivity();
+        if (wParam == VK_TAB)
+        {
+            g_uiTabDown = false;
+            g_tabRepeatStarted = false;
+            KillTimer(hwnd, kTabRepeatTimerId);
+        }
+        // Alt/AltGr release is confirmed by the input thread's physical-state
+        // polling, which also works when the former foreground was elevated.
+        return 0;
+    }
+
+    case WM_CHAR:
+    case WM_SYSCHAR:
+    case WM_DEADCHAR:
+    case WM_SYSDEADCHAR:
+        if (IsSelectorActuallyActive())
+            return 0;
+        break;
+
     case WM_TIMER:
     {
         if (wParam == kTabRepeatTimerId)
@@ -5916,8 +5959,7 @@ static bool CreateSelector(bool shiftHeld)
     CreateUiFonts();
     UpdateThumbnailSlots();
 
-    // Allows the Alt+Tab window to take foreground when it is shown from
-    // the WH_KEYBOARD_LL hook context.
+    // Allows the selector to take foreground after Explorer forwards Alt+Tab.
     INPUT input;
     ZeroMemory(&input, sizeof(INPUT));
     SendInput(1, &input, sizeof(INPUT));
@@ -6345,12 +6387,11 @@ static bool UiCommandMatchesSession(WPARAM sessionId)
     return static_cast<LONG>(sessionId) == g_uiSessionId && IsSelectorActive();
 }
 
-// Solo para sesiones iniciadas por el hotkey de Explorer: el foco estaba en una
-// ventana elevada, cuyas teclas el hook no ve. Explorer ya concedió
-// AllowSetForegroundWindow a este proceso, así que el selector toma el foco una
-// sola vez (sin reintentos) y el resto de la sesión vuelve a pasar por el hook.
+// Sesiones iniciadas desde Explorer: este permite al proceso del selector tomar
+// el foco aunque lo tuviera una ventana elevada. El selector procesa la
+// navegación en su WndProc; el polling de modificadores confirma Alt/Ctrl.
 // WS_EX_NOACTIVATE se retira solo durante la sesión; HideSelectorForSession lo
-// restablece. Si falla, la sesión sigue con Tab (hotkey) y el sondeo de Alt.
+// restablece. Si no logra tomar el foco, el hotkey reenviado sigue navegando.
 static void UiTakeForeground()
 {
     if (!g_selector || !IsWindow(g_selector))
@@ -6522,26 +6563,6 @@ static void HandleUiCommand(const MSG& msg)
                (msg.lParam & kUiOpenFromHotkey) != 0);
         break;
 
-    case WM_UI_TAB_DOWN:
-        if (!UiCommandMatchesSession(msg.wParam))
-            break;
-        MarkSelectorActivity();
-        if (msg.lParam != 0) SelectPrevious();
-        else SelectNext();
-        g_uiTabDown = true;
-        g_tabRepeatStarted = false;
-        SetTimer(g_selector, kTabRepeatTimerId, kTabRepeatInitialDelayMs, nullptr);
-        break;
-
-    case WM_UI_TAB_UP:
-        if (static_cast<LONG>(msg.wParam) != g_uiSessionId)
-            break;
-        g_uiTabDown = false;
-        g_tabRepeatStarted = false;
-        if (g_selector && IsWindow(g_selector))
-            KillTimer(g_selector, kTabRepeatTimerId);
-        break;
-
     case WM_UI_NAVIGATE:
         if (!UiCommandMatchesSession(msg.wParam))
             break;
@@ -6592,7 +6613,8 @@ static void HandleUiCommand(const MSG& msg)
     }
 }
 
-// HOOKS (input thread). Callbacks mínimos: estado local/atómico + PostThreadMessage.
+// INPUT THREAD. El mouse hook solo publica eventos; teclado y modifiers siguen
+// rutas separadas por Explorer, el selector y el polling físico.
 
 static bool InputSessionActive()
 {
@@ -6621,16 +6643,6 @@ static void InputEndSession(UINT command)
     }
     ClearSelectorKeyboardSession();
     PostUiCommand(command, static_cast<WPARAM>(id), 0);
-}
-
-static bool IsKeyDownMessage(WPARAM message)
-{
-    return message == WM_KEYDOWN || message == WM_SYSKEYDOWN;
-}
-
-static bool IsKeyUpMessage(WPARAM message)
-{
-    return message == WM_KEYUP || message == WM_SYSKEYUP;
 }
 
 static bool SessionModifierReleased()
@@ -6670,12 +6682,9 @@ static void OnModifierReleased()
     if (InputSessionActive() && SessionModifierReleased())
         InputEndSession(WM_UI_CONFIRM);
     g_altGrActive = IsAltGrPhysicallyDown();
-    if (!InputSessionActive() && !g_altGrActive)
-        g_altGrTaskSwitcherArmed = false;
 }
 
-// Alta de sesión compartida por el hook de teclado y por el hotkey reenviado
-// desde Explorer, para que ambos caminos no puedan divergir. Solo input thread.
+// Abre una sesión a partir del hotkey reenviado desde Explorer. Solo input thread.
 // Devuelve false (con el estado ya limpio) si el UI thread no aceptó la orden.
 static bool StartInputSession(bool leftAlt, bool rightAlt, bool ctrlHeld,
                               bool shift, bool fromHotkey)
@@ -6695,12 +6704,7 @@ static bool StartInputSession(bool leftAlt, bool rightAlt, bool ctrlHeld,
         : (controlAltHeld ? ModifierSession::ControlAlt
                           : (leftAlt ? ModifierSession::LeftAlt
                                      : ModifierSession::RightAlt));
-    // Si el Tab llegó por hotkey, el hook no lo vio: no hay un keyup que
-    // esperar y no debe quedar marcado como pulsado/suprimido.
-    g_tabDown = !fromHotkey;
-    g_tabSuppressed = !fromHotkey;
     g_altGrActive = rightAlt && ctrlHeld;
-    g_altGrTaskSwitcherArmed = rightAlt && ctrlHeld;
 
     const bool posted = PostUiCommand(
         WM_UI_OPEN, static_cast<WPARAM>(id),
@@ -6728,249 +6732,7 @@ static bool StartInputSession(bool leftAlt, bool rightAlt, bool ctrlHeld,
 
     InterlockedCompareExchange(&g_sessionActive, 0, id);
     ClearSelectorKeyboardSession();
-    g_altGrTaskSwitcherArmed = false;
     return false;
-}
-
-static LRESULT CALLBACK KeyboardHook(int nCode, WPARAM wParam, LPARAM lParam)
-{
-    if (nCode != HC_ACTION || !lParam)
-        return CallNextHookEx(g_keyboardHook, nCode, wParam, lParam);
-
-    KBDLLHOOKSTRUCT* key = reinterpret_cast<KBDLLHOOKSTRUCT*>(lParam);
-
-    // En layouts con AltGr el sistema genera un Ctrl izquierdo "falso" (scancode
-    // 0x21D). Se procesa aunque venga marcado como inyectado para no perder el
-    // estado de AltGr; el resto de teclas inyectadas se ignoran.
-    const bool fakeAltGrCtrl = key->vkCode == VK_LCONTROL && key->scanCode == 0x21D;
-    if ((key->flags & LLKHF_INJECTED) != 0 && !fakeAltGrCtrl)
-    {
-        return CallNextHookEx(g_keyboardHook, nCode, wParam, lParam);
-    }
-
-    SyncInputSession();
-
-    bool up = IsKeyUpMessage(wParam) || ((key->flags & LLKHF_UP) != 0);
-    bool down = !up && IsKeyDownMessage(wParam);
-    DWORD vk = key->vkCode;
-
-    bool isLeftAlt = (vk == VK_LMENU) || (vk == VK_MENU && (key->flags & LLKHF_EXTENDED) == 0);
-    bool isRightAlt = (vk == VK_RMENU) || (vk == VK_MENU && (key->flags & LLKHF_EXTENDED) != 0);
-    bool isLeftCtrl = (vk == VK_LCONTROL) || (vk == VK_CONTROL && (key->flags & LLKHF_EXTENDED) == 0);
-    bool isRightCtrl = (vk == VK_RCONTROL) || (vk == VK_CONTROL && (key->flags & LLKHF_EXTENDED) != 0);
-
-    if (isLeftAlt)
-    {
-        if (down)
-            g_altLeftDown = true;
-        if (up)
-        {
-            g_altLeftDown = false;
-            SendAltMenuMaskIfNeeded();
-            OnModifierReleased();
-        }
-        else
-            g_altGrActive = IsAltGrPhysicallyDown();
-        return CallNextHookEx(g_keyboardHook, nCode, wParam, lParam);
-    }
-
-    if (isRightAlt)
-    {
-        if (down)
-            g_altRightDown = true;
-        if (up)
-        {
-            g_altRightDown = false;
-            SendAltMenuMaskIfNeeded();
-            OnModifierReleased();
-        }
-        else
-            g_altGrActive = IsAltGrPhysicallyDown();
-        return CallNextHookEx(g_keyboardHook, nCode, wParam, lParam);
-    }
-
-    if (isRightCtrl)
-    {
-        if (down)
-            g_ctrlRightDown = true;
-        if (up)
-        {
-            g_ctrlRightDown = false;
-            OnModifierReleased();
-        }
-        else
-            g_altGrActive = IsAltGrPhysicallyDown();
-        return CallNextHookEx(g_keyboardHook, nCode, wParam, lParam);
-    }
-
-    if (isLeftCtrl)
-    {
-        if (down)
-            g_ctrlLeftDown = true;
-        if (up)
-        {
-            g_ctrlLeftDown = false;
-            OnModifierReleased();
-        }
-        else
-            g_altGrActive = IsAltGrPhysicallyDown();
-        return CallNextHookEx(g_keyboardHook, nCode, wParam, lParam);
-    }
-
-    // Modifier-up callbacks can be lost while the system is under heavy input
-    // load. Every non-modifier event is a safe point to reconcile the cached
-    // state; unlike the current event, these modifier states are already settled.
-    InputReconcileModifiersFromSystem();
-    bool sessionActive = InputSessionActive();
-    if (sessionActive && SessionModifierReleased())
-    {
-        // Recover the normal Alt release path if its low-level callback was
-        // missed. A bare Tab following it must not act on a stale selector session.
-        OnModifierReleased();
-        sessionActive = InputSessionActive();
-    }
-
-    if (vk == VK_ESCAPE && down && sessionActive)
-    {
-        InputEndSession(WM_UI_CANCEL);
-        return 1;
-    }
-
-    // AltGr se representa como Ctrl + Alt derecho. Cuando AltGr+Tab ya armó
-    // nuestro selector, nunca dejamos que Ctrl+Alt+Flecha alcance al sistema
-    // y active, por ejemplo, la rotación de pantalla. El bloqueo está limitado
-    // a esta sesión; Ctrl+Alt+Flecha normal fuera del selector sigue intacto.
-    if (g_altGrTaskSwitcherArmed &&
-        (vk == VK_LEFT || vk == VK_RIGHT || vk == VK_UP || vk == VK_DOWN))
-    {
-        if (sessionActive && down)
-        {
-            if (vk == VK_LEFT)
-                PostUiCommand(WM_UI_NAVIGATE, static_cast<WPARAM>(g_inputSessionId),
-                              static_cast<LPARAM>(-1));
-            else if (vk == VK_RIGHT)
-                PostUiCommand(WM_UI_NAVIGATE, static_cast<WPARAM>(g_inputSessionId),
-                              static_cast<LPARAM>(1));
-        }
-        // Up/Down and any key-up are simply consumed so Ctrl+Alt+Arrow
-        // never reaches the Windows display-rotation shortcut.
-        return 1;
-    }
-
-    if (sessionActive && down && vk == VK_LEFT)
-    {
-        PostUiCommand(WM_UI_NAVIGATE, static_cast<WPARAM>(g_inputSessionId),
-                      static_cast<LPARAM>(-1));
-        return 1;
-    }
-
-    if (sessionActive && down && vk == VK_RIGHT)
-    {
-        PostUiCommand(WM_UI_NAVIGATE, static_cast<WPARAM>(g_inputSessionId),
-                      static_cast<LPARAM>(1));
-        return 1;
-    }
-
-    if (vk == VK_RETURN && sessionActive)
-    {
-        if (down)
-        {
-            InputEndSession(WM_UI_CONFIRM);
-        }
-        return 1;
-    }
-
-    if (vk == VK_TAB)
-    {
-        if (down)
-        {
-            if (!sessionActive &&
-                InterlockedCompareExchange(&g_selectionTransitionActive, 0, 0) != 0)
-            {
-                // Consumir también el Tab inicial evita abrir el selector
-                // nativo mientras DWM presenta la ventana confirmada.
-                return 1;
-            }
-            if (!sessionActive)
-            {
-                // Alt izquierdo, Alt derecho y AltGr se distinguen a partir del
-                // estado rastreado por eventos (más GetAsyncKeyState como
-                // respaldo para modificadores pulsados antes del hook). Ya no
-                // se usa un flag AltGr "pegajoso": AltGr+otras teclas no abre
-                // el selector ni deja estado residual.
-                bool leftAlt = g_altLeftDown ||
-                               ((GetAsyncKeyState(VK_LMENU) & 0x8000) != 0);
-                bool rightAlt = g_altRightDown ||
-                                ((GetAsyncKeyState(VK_RMENU) & 0x8000) != 0);
-                bool ctrlHeld = g_ctrlLeftDown || g_ctrlRightDown ||
-                                ((GetAsyncKeyState(VK_LCONTROL) & 0x8000) != 0) ||
-                                ((GetAsyncKeyState(VK_RCONTROL) & 0x8000) != 0);
-                bool altGrHeld = rightAlt && ctrlHeld;
-
-                if (leftAlt || rightAlt)
-                {
-                    bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
-
-                    // La primera pulsación se consume EN ESTE MISMO callback.
-                    // No esperamos a que el UI thread abra el selector antes de
-                    // bloquearla: Windows nunca recibe este Tab como Alt+Tab.
-                    if (StartInputSession(leftAlt, rightAlt, ctrlHeld, shift, false))
-                        return 1;
-
-                    // Para AltGr el bloqueo es deliberado incluso si el UI thread
-                    // no está disponible. Es preferible perder esa pulsación a
-                    // dejar que Windows abra su Task Switcher nativo.
-                    if (altGrHeld)
-                        return 1;
-
-                    // Alt/Alt+Tab tradicional conserva su fallback anterior si
-                    // nuestro UI no está disponible.
-                    return CallNextHookEx(g_keyboardHook, nCode, wParam, lParam);
-                }
-            }
-            else
-            {
-                if (!g_tabDown)
-                {
-                    bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
-                    g_tabDown = true;
-                    PostUiCommand(WM_UI_TAB_DOWN, static_cast<WPARAM>(g_inputSessionId),
-                                  shift ? 1 : 0);
-                }
-                return 1;
-            }
-        }
-        else if (up)
-        {
-            // Soltar Tab solo detiene la repetición; la selección se confirma
-            // al soltar Alt, o explícitamente con Enter/clic.
-            g_tabDown = false;
-            if (sessionActive)
-            {
-                PostUiCommand(WM_UI_TAB_UP, static_cast<WPARAM>(g_inputSessionId), 0);
-            }
-            if (sessionActive || g_tabSuppressed)
-            {
-                g_tabSuppressed = false;
-                return 1;
-            }
-        }
-    }
-
-    if (sessionActive)
-    {
-        if (vk == VK_LWIN || vk == VK_RWIN || vk == VK_APPS)
-        {
-            return 1;
-        }
-
-        if (vk != VK_SHIFT && vk != VK_LSHIFT && vk != VK_RSHIFT &&
-            !isLeftAlt && !isRightAlt && !isLeftCtrl && !isRightCtrl)
-        {
-            return 1;
-        }
-    }
-    return CallNextHookEx(g_keyboardHook, nCode, wParam, lParam);
 }
 
 static LRESULT CALLBACK MouseHook(int nCode, WPARAM wParam, LPARAM lParam)
@@ -7030,10 +6792,9 @@ static LRESULT CALLBACK MouseHook(int nCode, WPARAM wParam, LPARAM lParam)
 
 // HOTKEY REENVIADO DESDE EXPLORER Y SONDEO DE MODIFICADORES (input thread)
 //
-// El hook WH_KEYBOARD_LL no recibe de forma fiable las teclas mientras una
-// ventana elevada tiene el foco. Explorer reenvía el WM_HOTKEY; un timer del
-// input thread consulta además el estado físico de Alt para no depender del
-// evento key-up del hook al confirmar Alt/AltGr.
+// Explorer entrega el WM_HOTKEY a la ventana de control. El selector maneja
+// sus propias teclas cuando toma el foco; este timer detecta la liberación de
+// Alt/Ctrl mediante el estado físico, sin un hook global de teclado.
 
 static void InputSyncModifiersFromSystem()
 {
@@ -7063,7 +6824,8 @@ static void InputHandleForwardedHotkey(WPARAM flags)
         return;
     }
 
-    // El hook pudo no ver los modificadores: se toman del estado real.
+// El hotkey llega desde Explorer; tomar los modificadores físicos para
+    // distinguir Alt, AltGr y Ctrl+Alt.
     InputSyncModifiersFromSystem();
     bool leftAlt = g_altLeftDown;
     const bool rightAlt = g_altRightDown;
@@ -7082,14 +6844,15 @@ static void InputHandleForwardedHotkey(WPARAM flags)
     // StartInputSession owns the shared modifier-release polling setup.
 }
 
-// Respaldo de la suelta de Alt/AltGr: si el hook no vio el key-up, confirma
-// cuando GetAsyncKeyState indica que Alt lleva varios ticks físicos suelto.
+// Confirma la liberación del modificador leyendo su estado físico periódicamente;
+// no depende de un hook global de teclado ni de recibir key-up del foreground.
 static void InputPollModifierRelease(HWND control)
 {
     if (!g_modifierReleasePolling || !InputSessionActive())
     {
         g_modifierReleasePolling = false;
         KillTimer(control, kModifierReleasePollTimerId);
+        SyncInputSession();
         return;
     }
 
@@ -7170,31 +6933,12 @@ static DWORD WINAPI InputThreadProc(LPVOID)
     else
     {
         g_inputControlWnd = control;
-
-        // A low-level hook callback executes on the installing input thread.
-        // Prefer the mod module, but retry without an hMod for tool-process
-        // loaders that cannot resolve the injected module for a global hook.
-        SetLastError(ERROR_SUCCESS);
-        g_keyboardHook = SetWindowsHookExW(WH_KEYBOARD_LL, KeyboardHook,
-                                           g_hModule, 0);
-        DWORD hookError = g_keyboardHook ? ERROR_SUCCESS : GetLastError();
-        if (!g_keyboardHook && hookError == ERROR_MOD_NOT_FOUND)
-        {
-            SetLastError(ERROR_SUCCESS);
-            g_keyboardHook = SetWindowsHookExW(WH_KEYBOARD_LL, KeyboardHook,
-                                               nullptr, 0);
-            if (!g_keyboardHook)
-                hookError = GetLastError();
-        }
-        ok = g_keyboardHook != nullptr;
-        if (!ok)
-            Wh_Log(L"SetWindowsHookEx(WH_KEYBOARD_LL) failed: %lu", hookError);
+        ok = true;
     }
     if (!ok && control)
-        Wh_Log(L"Input thread initialization failed");
+        Wh_Log(L"Input control window initialization failed");
 
-    // Hooks instalados y UI thread ya listo (se inicia antes): explorer puede
-    // empezar a reenviar el hotkey.
+    // UI thread ya listo: Explorer puede empezar a reenviar el hotkey.
     if (ok && control)
         SetWindowTextW(control, kInputControlTitleReady);
 
@@ -7249,11 +6993,6 @@ static DWORD WINAPI InputThreadProc(LPVOID)
     if (control)
         SetWindowTextW(control, kInputControlTitleIdle);
     g_modifierReleasePolling = false;
-    if (g_keyboardHook)
-    {
-        UnhookWindowsHookEx(g_keyboardHook);
-        g_keyboardHook = nullptr;
-    }
     if (g_mouseHook)
     {
         UnhookWindowsHookEx(g_mouseHook);
@@ -7446,7 +7185,8 @@ BOOL WhTool_ModInit()
         return FALSE;
     g_uiThreadId = uiThreadId;
 
-    // 2) Input thread: solo hooks. Se publica cuando el selector ya existe.
+    // 2) Input thread: crea la ventana de control y el polling. Se publica
+    //    cuando el selector ya existe.
     if (!StartWorkerThread(InputThreadProc, &g_inputThread, &g_inputThreadId,
                            &g_inputReadyEvent, &g_inputInitOk))
     {
@@ -7512,14 +7252,13 @@ void WhTool_ModUninit()
 // EXPLORER (solo en explorer.exe)
 //
 // El selector nativo lo abre un hotkey que explorer registra para sí mismo.
-// Normalmente el hook WH_KEYBOARD_LL se traga el Tab antes de que se procesen
-// los hotkeys, pero no recibe las teclas cuando una ventana elevada (Task
-// Manager, windhawk.exe elevado...) tiene el foco. Los hotkeys se entregan en
-// todos los casos, así que aquí se observa la recuperación de mensajes del hilo
-// "Immersive Shell" de explorer y el hotkey se entrega a Overhaulded en lugar de
-// abrir el selector nativo. Esta es la única parte del mod que corre en
-// explorer: no crea ventanas, ni D2D, ni hooks globales. El hilo se localiza
-// por su nombre y solo él lleva un hook de hilo (WH_GETMESSAGE).
+// El selector nativo registra el hotkey de Alt+Tab en el shell. Este componente
+// observa la cola del hilo "Immersive Shell" de Explorer y reenvía el hotkey al
+// switcher en lugar de abrir el selector nativo. Explorer mantiene la ruta de
+// Alt+Tab cuando el foreground es una ventana elevada; el selector procesa sus
+// propias teclas una vez toma el foco. Esta es la única parte que corre en
+// Explorer: no crea ventanas ni instala hooks globales; solo usa un hook de
+// hilo WH_GETMESSAGE.
 
 static const WCHAR kAltTabThreadName[] = L"Immersive Shell";
 static const DWORD kFindAltTabThreadIntervalMs = 2000;
