@@ -1,14 +1,8 @@
 # Overhaulded Task Switcher
  
 A modern, fluid and highly visual replacement for the native Windows Alt+Tab experience.
- 
-Built from scratch in native C++ as a project to explore Windows APIs, graphics, animation systems and desktop customization. You can also see the original [GITHUB REPOSITORY](https://github.com/IMiloDev/OverhauldedWin) to send me issues.
 
-> **⚠️ DISCLAIMER**
->
-> When an **elevated window** is focused, Windows may not deliver low-level keyboard input to a normal-privilege process (UIPI). Windhawk 2.0's UIAccess tool process is included to handle this case; the Explorer hotkey forwarder remains an experimental fallback.
->
-> [Read more about this limitation →](#elevated-window-input)
+Built from scratch in native C++ as a project to explore Windows APIs, graphics, animation systems and desktop customization. You can also see the original [GITHUB REPOSITORY](https://github.com/IMiloDev/OverhauldedWin) to send me issues.
 
 ## Screenshot
 
@@ -82,21 +76,10 @@ Overhaulded remains prepared in the background instead of creating the entire ta
 
 This allows the selector to appear immediately while keeping the visual opening animation smooth.
 
-The architecture separates global input handling from the UI/rendering system so that heavy graphics and window-management operations do not run directly inside low-level keyboard hooks.
+The architecture separates Explorer's shell-hotkey forwarding, modifier-state polling, selector-window keyboard handling, and UI/rendering. The Explorer hook only forwards the hotkey; rendering and window management run on the switcher's UI thread.
 
 ---
 
-# IMPORTANT
-
-Overhaulded is still a pre-release project.
-
-Some applications may behave differently than standard desktop windows, especially those using unusual window structures, custom rendering, or multiple processes.
-
-### Elevated Window Input
-
-A standard-privilege process cannot reliably receive low-level keyboard events while an elevated window is focused because of Windows UIPI. On Windhawk 2.0, this mod includes `windhawk-mod-uiaccess.exe` so the tool process can use UIAccess for this scenario. The Explorer hotkey-forwarding component is retained as an experimental fallback. Behavior can still vary by Windows version and configuration; if Alt+Tab falls back to the native switcher, verify that the UIAccess-capable process is available and enabled.
-
----
 
 ## Controls
 
@@ -148,7 +131,8 @@ This project is licensed under the **MIT License**.
 See the https://github.com/IMiloDev/OverhauldedWin/blob/main/LICENSE file for the complete license text.
 
 ---
+Overhaulded is still a pre-release project.
 
-> Made by Milo.
+Some applications may behave differently than standard desktop windows, especially those using unusual window structures, custom rendering, or multiple processes.
 
 ![OverhauldedWin Task Switcher](https://raw.githubusercontent.com/IMiloDev/OverhauldedWin/main/assets/icons/preview.gif)
