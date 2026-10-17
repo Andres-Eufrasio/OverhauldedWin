@@ -2,13 +2,13 @@
 // @id              overhaulded-alt-tab
 // @name            OverhauldedWin Alt+Tab
 // @description     Replaces the boring Windows Alt+Tab with a modern and elegant window switcher.
-// @version         1.3.0
+// @version         1.3.1
 // @author          IMiloDev
 // @github          https://github.com/IMiloDev
 // @homepage        https://github.com/IMiloDev/OverhauldedWin
 // @include         windhawk.exe
 // @include         explorer.exe
-// @compilerOptions -lshell32
+// @compilerOptions -lshell32 -lgdi32
 // ==/WindhawkMod==
 
 // ==WindhawkModReadme==
@@ -164,66 +164,90 @@ Some applications may behave differently than standard desktop windows, especial
       - "50": 50%
       - "75": 75%
       - "90": 90%
-      - "100": 100%
+      - "100": 100% (default)
       - "110": 110%
       - "125": 125%
-    - PerformanceMode: "smooth"
-      $name: Performance mode
-      $description: Controls the animation update frequency.
-      $options:
-      - "smooth": Smooth
-      - "balanced": Balanced
-    - AnimationSpeed: "100"
-      $name: Animation speed
-      $description: Relative speed of the task switcher animations.
-      $options:
-      - "75": 75%
-      - "100": 100%
-      - "125": 125%
-      - "150": 150%
-    - AnimationStyle: "Linear"
-      $name: Animation style
-      $description: Open and close animation. Linear is standard, Bouncy adds a pronounced bounce, and RCT is a CRT-style collapse and expansion.
-      $options:
-      - "Linear": Linear
-      - "Bouncy": Bouncy
-      - "RCT": RCT
     - Cards:
         - VisibleCards: "5"
           $name: Visible cards
           $description: Number of cards shown in the carousel.
           $options:
           - "3": 3 cards
-          - "5": 5 cards
+          - "5": 5 cards (default)
+        - SingleWindowCard: true
+          $name: Single card when one window is open
+          $description: Show only the center card when there is just one eligible window.
         - NormalColor: "#050507"
           $name: Cards color
-          $description: Base color of the cards that are not selected. Default Hex - #050507. An empty or invalid value uses the default.
+          $description: Base color of unselected cards.
         - SelectedColor: "#090A0B"
           $name: Selected card color
-          $description: Base color of the selected card. Default Hex - #090A0B. An empty or invalid value uses the default.
+          $description: Base color of the selected card.
         - ExpandSelectedWindow: true
           $name: Expand selected window
-          $description: Animates the selected card toward the selected window when confirmed.
+          $description: Animate the selected card toward the selected window when confirmed.
+        - MotionStyle: "Smooth"
+          $name: Card motion style
+          $description: Controls card-to-card navigation independently from the background opening and closing animation.
+          $options:
+          - "Smooth": Smooth (no overshoot)
+          - "Linear": Linear
+          - "Bouncy": Bouncy
+        - MotionSpeed: "100"
+          $name: Card motion speed
+          $description: Controls horizontal drag sensitivity and card navigation duration. Higher values move faster.
+          $options:
+          - "75": 75% (slower)
+          - "100": 100% (default)
+          - "125": 125%
+          - "150": 150%
+          - "175": 175%
+          - "200": 200% (fastest)
       $name: Cards
   $name: Appearance
+- Animation:
+    - Style: "Cinematic"
+      $name: Background and selector animation style
+      $description: Select the style for opening and closing the selector/background. Card navigation is configured separately under Appearance > Cards.
+      $options:
+      - "Linear": Linear
+      - "Bouncy": Bouncy
+      - "RCT": RCT (horizontal line reveal)
+      - "Cinematic": Cinematic (depth and controlled overshoot)
+    - Speed: "100"
+      $name: Animation speed
+      $description: Relative speed of animations.
+      $options:
+      - "75": 75%
+      - "100": 100% (default)
+      - "125": 125%
+      - "150": 150%
+    - PerformanceMode: "smooth"
+      $name: Performance mode
+      $description: Controls the animation update frequency.
+      $options:
+      - "smooth": Smooth
+      - "balanced": Balanced
+  $name: Animation
 - Background: "dwm"
   $name: Background
   $description: Background layer behind the cards.
   $options:
   - "none": None
   - "dwm": Transparent - DWM
+  - "blurred": Fullscreen
 - Dwm:
     - BackgroundColor: "#141A22"
       $name: Background color
-      $description: Color of the transparent DWM background behind the cards. Default Hex - #141A22. An empty or invalid value uses the default.
+      $description: Color of the transparent DWM background behind the cards.
     - Opacity: 20
       $name: Opacity
-      $description: DWM background opacity (0-100). Default - 20.
+      $description: DWM background opacity (0-100).
   $name: DWM background
 - ExperimentalSettings:
     - GeneralBackground: "none"
       $name: General Background
-      $description: Experimental features may require additional GPU, CPU and RAM resources and may affect performance. Pattern Waves requires a background other than None.
+      $description: Experimental background overlay. Pattern Waves may require additional GPU resources.
       $options:
       - "none": None
       - "pattern": Pattern Waves
@@ -242,13 +266,13 @@ Some applications may behave differently than standard desktop windows, especial
           $description: Surface deformation intensity (0-200).
         - Density: 24
           $name: Density
-          $description: Dot spacing (8-48).
+          $description: Pattern spacing (8-48).
         - Light: 120
           $name: Light
           $description: Apparent depth and illumination (0-200).
         - Contrast: 100
           $name: Contrast
-          $description: Dot contrast (0-200).
+          $description: Pattern contrast (0-200).
         - Opacity: 100
           $name: Opacity
           $description: Pattern opacity (0-100).
@@ -259,12 +283,16 @@ Some applications may behave differently than standard desktop windows, especial
           $name: Cursor strength
           $description: Cursor ripple intensity (0-200).
       $name: Pattern Waves
-  $name: Experimental
+  $name: Experimental settings
 */
 // ==/WindhawkModSettings==
 
 #include <windows.h>
 #include <d2d1.h>
+#include <d2d1_1.h>
+#include <d2d1effects.h>
+#include <d3d11.h>
+#include <dxgi.h>
 #include <d2d1helper.h>
 #include <dwrite.h>
 #include <dwmapi.h>
@@ -295,8 +323,65 @@ static int g_animationSpeedPercent = 100;
 enum class BaseBackgroundMode
 {
     None,
-    Dwm
+    Dwm,
+    Fullscreen
 };
+
+static bool g_blurredBackgroundReady = false;
+static RECT g_blurredMonitorRect = {};
+static RECT g_blurredInitialRect = {};
+static POINT g_selectorSceneOffset = {};
+static std::vector<DWORD> g_capturedDesktopPixels;
+static std::vector<DWORD> g_blurredDesktopPixels;
+static bool g_fullscreenHdcDrawFailureLogged = false;
+
+// Captura de escritorio y superficies auxiliares legacy. La escena Fullscreen se
+// presenta ahora en un HWND render target Direct2D de hardware, sin BitBlt final.
+struct FsSurface
+{
+    HDC dc = nullptr;
+    HBITMAP bitmap = nullptr;
+    HGDIOBJ oldBitmap = nullptr;
+    int width = 0;
+    int height = 0;
+};
+static FsSurface g_fsSharp;
+static FsSurface g_fsBlur;
+static FsSurface g_fsBack;
+static FsSurface g_fsScene;                      // superficie del área sucia (Direct2D)
+static ID2D1Bitmap* g_fsSharpD2D = nullptr;      // escritorio nítido (GPU)
+static ID2D1Bitmap* g_fsBlurD2D = nullptr;       // escritorio desenfocado (GPU)
+static RECT g_paintDirty = {};                   // rcPaint del WM_PAINT actual
+static float g_lastBackdropPresence = -1.0f;
+
+// Sombra suave de las cards en GDI: sprite premultiplicado (solo alfa, negro)
+// que se dibuja con AlphaBlend en 9 porciones. msimg32 se carga bajo demanda.
+struct ShadowSprite
+{
+    HDC dc = nullptr;
+    HBITMAP bitmap = nullptr;
+    HGDIOBJ oldBitmap = nullptr;
+    int size = 0;
+    int margin = 0;
+    int radius = 0;
+};
+static ShadowSprite g_shadowSprite;
+typedef BOOL (WINAPI* AlphaBlendProc)(HDC, int, int, int, int, HDC, int, int,
+                                      int, int, BLENDFUNCTION);
+static HMODULE g_msimg32Module = nullptr;
+static AlphaBlendProc g_pAlphaBlend = nullptr;
+static BITMAPINFO g_blurredDesktopBitmapInfo = {};
+// Equivalent black overlay multiplier; 0.58 leaves 58% of the blurred RGB values.
+static const float kFullscreenBackdropBrightness = 0.58f;
+static const float kFullscreenBlurStandardDeviation = 46.0f;
+// Blur is computed at quarter resolution per axis (1/16 of the pixels).
+// DWM/D2D scales it to the monitor during composition; the sharp reveal stays full-res.
+static const int kFullscreenBlurDownsample = 4;
+static void GetFullscreenBlurDimensions(int width, int height, int& blurWidth, int& blurHeight)
+{
+    blurWidth = std::max(1, (width + kFullscreenBlurDownsample - 1) / kFullscreenBlurDownsample);
+    blurHeight = std::max(1, (height + kFullscreenBlurDownsample - 1) / kFullscreenBlurDownsample);
+}
 
 enum class ExperimentalBackgroundMode
 {
@@ -314,6 +399,7 @@ static ExperimentalBackgroundMode g_experimentalBackgroundMode =
 static bool IsPatternWavesActive()
 {
     return g_baseBackgroundMode != BaseBackgroundMode::None &&
+           !g_blurredBackgroundReady &&
            g_experimentalBackgroundMode == ExperimentalBackgroundMode::PatternWaves;
 }
 
@@ -321,7 +407,9 @@ static bool IsPatternWavesActive()
 // available even when an experimental background such as Pattern Waves is active.
 static bool IsBackgroundSpotlightAllowed()
 {
-    return g_baseBackgroundMode == BaseBackgroundMode::Dwm;
+    return g_baseBackgroundMode == BaseBackgroundMode::Dwm ||
+           (g_baseBackgroundMode == BaseBackgroundMode::Fullscreen &&
+            !g_blurredBackgroundReady);
 }
 
 static COLORREF g_dwmBackgroundColor = RGB(20, 26, 34);
@@ -381,6 +469,9 @@ static ULONGLONG g_patternLastTick = 0;
 // One shared combined-field cache per rendered frame. Dots and border sample
 // this cache instead of recomputing procedural trigonometry independently.
 static float g_patternCombinedFieldCache[kPatternFieldCount] = {};
+// Temporary dimensions for rendering the same field in selector or monitor space.
+static int g_patternFieldRenderWidth = 0;
+static int g_patternFieldRenderHeight = 0;
 static const int kCounterWidth = 140;
 static const int kCounterHeight = 28;
 static const int kCounterTop = 378;
@@ -392,11 +483,16 @@ static COLORREF g_cardSelectedColor = RGB(9, 10, 11);
 static const UINT_PTR kActivityTimerId = 77;
 static const UINT_PTR kTabRepeatTimerId = 89;
 static const UINT_PTR kSelectorMotionTimerId = 90;
-static const float kNavigationDuration = 180.0f;
+static const float kNavigationDuration = 150.0f; // Linear/Smooth default, reduced from 180 ms.
+static const float kBouncyNavigationDuration = 180.0f; // Preserve the original spring timing.
 static const int kDefaultAnimationFps = 120;
-enum class AnimationStyle { Linear, Bouncy, Rct };
+enum class AnimationStyle { Linear, Bouncy, Rct, Cinematic };
 static AnimationStyle g_animationStyle = AnimationStyle::Linear;
+enum class CardMotionStyle { Smooth, Linear, Bouncy };
+static CardMotionStyle g_cardMotionStyle = CardMotionStyle::Smooth;
+static int g_cardMotionSpeedPercent = 100;
 static bool g_expandSelectedWindow = true;
+static bool g_singleWindowCard = true;
 static int g_animationFps = kDefaultAnimationFps;
 
 static int GetCarouselCenterSlot() { return g_visibleCardCount / 2; }
@@ -404,6 +500,14 @@ static int GetCarouselSlotCount() { return g_visibleCardCount; }
 static float AnimationDuration(float baseMs)
 {
     return baseMs * 100.0f / static_cast<float>(g_animationSpeedPercent);
+}
+static float CardNavigationDuration()
+{
+    const float baseDuration = g_cardMotionStyle == CardMotionStyle::Bouncy
+        ? kBouncyNavigationDuration : kNavigationDuration;
+    return baseDuration * 100.0f /
+        static_cast<float>(g_animationSpeedPercent) *
+        100.0f / static_cast<float>(g_cardMotionSpeedPercent);
 }
 static void LoadTaskSwitcherSettings()
 {
@@ -437,29 +541,45 @@ static void LoadTaskSwitcherSettings()
             g_uiScalePercent = static_cast<int>(std::max(50L, std::min(125L, parsed)));
     }
 
-    std::wstring speed = read(L"Appearance.AnimationSpeed");
-    if (speed.empty())
-        speed = read(L"AnimationSpeed");
+    std::wstring speed = read(L"Animation.Speed");
+    if (speed.empty()) speed = read(L"Appearance.AnimationSpeed");
+    if (speed.empty()) speed = read(L"AnimationSpeed");
     g_animationSpeedPercent = (speed == L"75" ? 75 : speed == L"125" ? 125 : speed == L"150" ? 150 : 100);
-    std::wstring mode = read(L"Appearance.PerformanceMode");
-    if (mode.empty())
-        mode = read(L"PerformanceMode");
+    std::wstring mode = read(L"Animation.PerformanceMode");
+    if (mode.empty()) mode = read(L"Appearance.PerformanceMode");
+    if (mode.empty()) mode = read(L"PerformanceMode");
     g_animationFps = mode == L"balanced" ? 90 : kDefaultAnimationFps;
 
-    std::wstring style = read(L"Appearance.AnimationStyle");
+    std::wstring style = read(L"Animation.Style");
+    if (style.empty()) style = read(L"Appearance.AnimationStyle");
     g_animationStyle = style == L"Bouncy" ? AnimationStyle::Bouncy
                      : style == L"RCT" ? AnimationStyle::Rct
+                     : style == L"Cinematic" ? AnimationStyle::Cinematic
                      : AnimationStyle::Linear;
+
+    std::wstring cardMotion = read(L"Appearance.Cards.MotionStyle");
+    g_cardMotionStyle = cardMotion == L"Linear" ? CardMotionStyle::Linear
+                      : cardMotion == L"Bouncy" ? CardMotionStyle::Bouncy
+                      : CardMotionStyle::Smooth;
+    const int cardSpeed = readNumber(L"Appearance.Cards.MotionSpeed", 75, 200);
+    g_cardMotionSpeedPercent = (cardSpeed == 75 || cardSpeed == 100 ||
+        cardSpeed == 125 || cardSpeed == 150 || cardSpeed == 175 ||
+        cardSpeed == 200) ? cardSpeed : 100;
     g_expandSelectedWindow =
         Wh_GetIntSetting(L"Appearance.Cards.ExpandSelectedWindow") != 0;
+    g_singleWindowCard =
+        Wh_GetIntSetting(L"Appearance.Cards.SingleWindowCard") != 0;
 
     // Background is the base layer and ExperimentalSettings.GeneralBackground
-    // controls the optional overlay. Any base value other than "none" uses the
-    // DWM background.
+    // controls the optional overlay. Blur falls back to the regular DWM surface
+    // for the current session if capture or processing cannot be prepared.
     std::wstring background = read(L"Background");
+    Wh_Log(L"[FS] Background leido = '%s'", background.c_str());
     g_baseBackgroundMode = background == L"none"
         ? BaseBackgroundMode::None
-        : BaseBackgroundMode::Dwm;
+        : background == L"blurred"
+            ? BaseBackgroundMode::Fullscreen
+            : BaseBackgroundMode::Dwm;
 
     std::wstring experimentalBackground = read(L"ExperimentalSettings.GeneralBackground");
     g_experimentalBackgroundMode = experimentalBackground == L"pattern"
@@ -570,6 +690,21 @@ static float EaseOutCubic(float t)
     float u = 1.0f - Clamp01(t);
     return 1.0f - u * u * u;
 }
+// Cinematic ease-out: a small, controlled overshoot gives the scene a sense
+// of momentum without changing the timing or spring model used by Bouncy.
+static float EaseOutBack(float t, float overshoot = 1.15f)
+{
+    t = Clamp01(t);
+    const float c1 = overshoot;
+    const float c3 = c1 + 1.0f;
+    const float u = t - 1.0f;
+    return 1.0f + c3 * u * u * u + c1 * u * u;
+}
+static float EaseInCubic(float t)
+{
+    t = Clamp01(t);
+    return t * t * t;
+}
 // Salida exponencial normalizada: velocidad inicial máxima (respuesta inmediata),
 // llega exactamente a 1.0 en t=1 y no tiene overshoot. k controla la agresividad.
 static float EaseOutExp(float t, float k)
@@ -614,6 +749,11 @@ static POINT g_selectionExpansionSceneOffset = {};
 // tarjeta visible hasta ese destino, sin crear otro renderer ni otra ventana.
 static bool g_selectionExpansionActive = false;
 static bool g_selectionExpansionFinishPending = false;
+// La superficie expandida permanece encima hasta que la ventana destino ya es
+// foreground (o vence el timeout), evitando un frame vacío entre ambas.
+static bool g_selectionActivationRequested = false;
+static ULONGLONG g_selectionActivationRequestTick = 0;
+static const ULONGLONG kSelectionActivationWaitMaxMs = 400;
 static float g_selectionExpansionDurationMs = 300.0f;
 static HWND g_selectionExpansionTarget = nullptr;
 static RECT g_selectionExpansionStartRect = {};
@@ -677,8 +817,10 @@ static D2D1::Matrix3x2F GetSceneTransform()
                       static_cast<float>(g_runtimeSelectorHeight) * 0.5f));
     // El cambio de tamaño/movimiento del HWND no debe mover la escena de la
     // tarjeta durante el primer frame de la expansión.
-    transform.dx += static_cast<float>(g_selectionExpansionSceneOffset.x);
-    transform.dy += static_cast<float>(g_selectionExpansionSceneOffset.y);
+    transform.dx += static_cast<float>(g_selectorSceneOffset.x +
+                                      g_selectionExpansionSceneOffset.x);
+    transform.dy += static_cast<float>(g_selectorSceneOffset.y +
+                                      g_selectionExpansionSceneOffset.y);
     return transform;
 }
 
@@ -693,12 +835,14 @@ static RECT TransformSceneRect(const RECT& source)
     result.right = static_cast<int>(roundf(cx + (source.right - cx) * sx));
     result.top = static_cast<int>(roundf(cy + (source.top - cy) * sy));
     result.bottom = static_cast<int>(roundf(cy + (source.bottom - cy) * sy));
+    OffsetRect(&result, g_selectorSceneOffset.x, g_selectorSceneOffset.y);
     return result;
 }
 
 typedef HRESULT (WINAPI* DwmGetCompositionTimingInfoFn)(HWND, DWM_TIMING_INFO*);
 typedef HRESULT (WINAPI* DwmRegisterThumbnailFn)(HWND, HWND, HTHUMBNAIL*);
 typedef HRESULT (WINAPI* DwmUnregisterThumbnailFn)(HTHUMBNAIL);
+typedef HRESULT (WINAPI* DwmQueryThumbnailSourceSizeFn)(HTHUMBNAIL, PSIZE);
 typedef HRESULT (WINAPI* DwmUpdateThumbnailPropertiesFn)(
     HTHUMBNAIL, const DWM_THUMBNAIL_PROPERTIES*);
 typedef HRESULT (WINAPI* DwmSetWindowAttributeFn)(HWND, DWORD,
@@ -777,6 +921,7 @@ struct AppGroup
     DWORD processId;
     std::wstring appName;
     std::wstring processPath;
+    std::wstring windowTitle;
     std::vector<HWND> windows;
     HWND representativeWindow;
     HICON icon;
@@ -793,6 +938,7 @@ struct UserWindowInfo
     DWORD processId;
     std::wstring processPath;
     std::wstring appName;
+    std::wstring windowTitle;
     ULONGLONG lastActivated;
 };
 
@@ -912,6 +1058,7 @@ static ThumbnailSlot g_thumbnailSlots[kMaxCarouselSlots] = {};
 static HMODULE g_dwmApi = nullptr;
 static DwmRegisterThumbnailFn g_dwmRegisterThumbnail = nullptr;
 static DwmUnregisterThumbnailFn g_dwmUnregisterThumbnail = nullptr;
+static DwmQueryThumbnailSourceSizeFn g_dwmQueryThumbnailSourceSize = nullptr;
 static DwmUpdateThumbnailPropertiesFn g_dwmUpdateThumbnailProperties = nullptr;
 static DwmSetWindowAttributeFn g_dwmSetWindowAttribute = nullptr;
 static DwmGetWindowAttributeFn g_dwmGetWindowAttribute = nullptr;
@@ -928,6 +1075,14 @@ static bool g_animActive = false;
 // Hover es exclusivamente visual y nunca sustituye a g_selected.
 static int g_hoveredSlot = -1;
 static bool g_hoveredCloseButton = false;
+// Mouse carousel drag is tracked on the UI thread. Selection is committed only
+// on release, while g_animOffset provides continuous Direct2D/DWM card motion.
+static bool g_mousePressActive = false;
+static bool g_mouseDragging = false;
+static int g_mousePressedSlot = -1;
+static POINT g_mousePressScreenPoint = {};
+static float g_mousePressAnimOffset = 0.0f;
+static int g_mousePressSelected = 0;
 static bool g_tabRepeatStarted = false;
 static bool g_cleanupInProgress = false;
 static bool g_selectorOpening = false;
@@ -972,7 +1127,9 @@ static HMODULE g_d2dApi = nullptr;
 static HMODULE g_dwriteApi = nullptr;
 
 static ID2D1Factory* g_d2dFactory = nullptr;
-static ID2D1DCRenderTarget* g_d2dDCRenderTarget = nullptr;
+static ID2D1DCRenderTarget* g_d2dDCRenderTarget = nullptr; // Target GDI para los modos no fullscreen.
+static ID2D1RenderTarget* g_d2dRenderTarget = nullptr;     // Target activo usado por los helpers D2D.
+static ID2D1HwndRenderTarget* g_fsHwndRenderTarget = nullptr; // Fullscreen: presentacion D2D por GPU, sin HDC/BitBlt.
 static ID2D1SolidColorBrush* g_d2dBrush = nullptr;
 static ID2D1RadialGradientBrush* g_closeAccentBrush = nullptr;
 static ID2D1PathGeometry* g_closeButtonGeometry = nullptr;
@@ -1068,11 +1225,16 @@ static void StopCarouselAnimation();
 static void UpdateSelectorControls();
 static void UpdateThumbnailSlots();
 static void RequestFrame();
+static void InvalidateSelectorForFrame();
 static void ArmFramePump();
 static void DisarmFramePump();
 static void RunFrame();
 static void ReleaseD2DDeviceResources();
 static void ApplyScenePresence(float presence);
+static bool PrepareFullscreenBackdrop(const RECT& monitorRect, const RECT& selectorRect);
+static void HideFullscreenBackdrop(bool releasePixels);
+static void UpdateFullscreenBackdrop();
+static bool IsFullscreenBackdropActive();
 struct CardSlotGeometry
 {
     float left;
@@ -1237,7 +1399,7 @@ static void UpdateHoveredSlot(POINT ptClient);
 static void CloseWindowForSlot(int slot);
 static ID2D1RadialGradientBrush* EnsureBackgroundSpotlightBrush()
 {
-    if (!g_d2dDCRenderTarget)
+    if (!g_d2dRenderTarget)
         return nullptr;
 
     if (g_backgroundSpotlightBrush &&
@@ -1267,7 +1429,7 @@ static ID2D1RadialGradientBrush* EnsureBackgroundSpotlightBrush()
     stops[2].color = D2D1::ColorF(brightR, brightG, brightB, 0.0f);
 
     ID2D1GradientStopCollection* collection = nullptr;
-    if (FAILED(g_d2dDCRenderTarget->CreateGradientStopCollection(
+    if (FAILED(g_d2dRenderTarget->CreateGradientStopCollection(
             stops, 3, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &collection)) ||
         !collection)
         return nullptr;
@@ -1278,7 +1440,7 @@ static ID2D1RadialGradientBrush* EnsureBackgroundSpotlightBrush()
     props.radiusX = DpiPx(kSpotlightRadiusDip);
     props.radiusY = DpiPx(kSpotlightRadiusDip);
 
-    HRESULT hr = g_d2dDCRenderTarget->CreateRadialGradientBrush(
+    HRESULT hr = g_d2dRenderTarget->CreateRadialGradientBrush(
         &props, nullptr, collection, &g_backgroundSpotlightBrush);
     collection->Release();
     if (FAILED(hr) || !g_backgroundSpotlightBrush)
@@ -1306,11 +1468,11 @@ static void DrawPatternShape(float x, float y, float radius)
     {
         D2D1_RECT_F square = D2D1::RectF(
             drawX - rx, drawY - ry, drawX + rx, drawY + ry);
-        g_d2dDCRenderTarget->FillRectangle(&square, g_d2dBrush);
+        g_d2dRenderTarget->FillRectangle(&square, g_d2dBrush);
         return;
     }
 
-    g_d2dDCRenderTarget->FillEllipse(
+    g_d2dRenderTarget->FillEllipse(
         D2D1::Ellipse(D2D1::Point2F(drawX, drawY), rx, ry),
         g_d2dBrush);
 }
@@ -1738,16 +1900,6 @@ static WindowClassification ClassifyApplicationWindow(
     return WindowClassification::Unknown;
 }
 
-static int FindAppGroup(DWORD processId)
-{
-    for (size_t i = 0; i < g_groups.size(); ++i)
-    {
-        if (g_groups[i].processId == processId)
-            return static_cast<int>(i);
-    }
-    return -1;
-}
-
 // Ventanas legítimas que Windows/host marcan como owned o ToolWindow y que el
 // filtro estricto descartaba (consolas, terminales, visor/editor de Windhawk).
 // Solo se consulta para ventanas que ya iban a ser rechazadas por GW_OWNER o
@@ -1917,12 +2069,23 @@ static bool RegisterUserWindow(HWND hwnd, bool activity)
     if (!IsRealUserApplicationWindow(hwnd, &processId, &processPath, &appName))
         return false;
 
+    int titleLength = GetWindowTextLengthW(hwnd);
+    std::wstring windowTitle(titleLength > 0 ? static_cast<size_t>(titleLength) + 1 : 1, L'\0');
+    int copiedTitle = GetWindowTextW(hwnd, windowTitle.data(), static_cast<int>(windowTitle.size()));
+    if (copiedTitle > 0)
+        windowTitle.resize(static_cast<size_t>(copiedTitle));
+    else
+        windowTitle.clear();
+
     ULONGLONG now = GetTickCount64();
     for (size_t i = 0; i < g_userWindows.size(); ++i)
     {
         UserWindowInfo& item = g_userWindows[i];
         if (item.hwnd == hwnd)
         {
+            item.windowTitle = windowTitle;
+            item.appName = appName;
+            item.processPath = processPath;
             if (activity)
                 item.lastActivated = now;
             return true;
@@ -1934,6 +2097,7 @@ static bool RegisterUserWindow(HWND hwnd, bool activity)
     item.processId = processId;
     item.processPath = processPath;
     item.appName = appName;
+    item.windowTitle = windowTitle;
     item.lastActivated = activity ? now : 0;
     g_userWindows.push_back(item);
     return true;
@@ -2037,70 +2201,39 @@ static void RefreshWindowList()
     g_groups.clear();
     HWND foreground = GetForegroundWindow();
 
+    // Cada HWND válido es una tarjeta independiente, incluso si varias
+    // ventanas pertenecen al mismo proceso.
     for (size_t i = 0; i < g_userWindows.size(); ++i)
     {
         UserWindowInfo& item = g_userWindows[i];
         if (!IsRealUserApplicationWindow(item.hwnd, nullptr, nullptr, nullptr))
             continue;
 
-        int groupIndex = FindAppGroup(item.processId);
-        if (groupIndex < 0)
+        bool duplicate = false;
+        for (size_t j = 0; j < g_groups.size(); ++j)
         {
-            AppGroup group = {};
-            group.processId = item.processId;
-            group.processPath = item.processPath;
-            group.appName = item.appName;
-            group.representativeWindow = item.hwnd;
-            group.icon = GetApplicationIcon(item.hwnd, item.processPath, &group.ownIcon);
-            group.iconBitmap = nullptr;
-            group.windows.push_back(item.hwnd);
-            g_groups.push_back(group);
-        }
-        else
-        {
-            AppGroup& group = g_groups[groupIndex];
-            bool duplicate = false;
-            for (size_t j = 0; j < group.windows.size(); ++j)
+            if (g_groups[j].representativeWindow == item.hwnd)
             {
-                if (group.windows[j] == item.hwnd)
-                {
-                    duplicate = true;
-                    break;
-                }
+                duplicate = true;
+                break;
             }
-            if (!duplicate)
-                group.windows.push_back(item.hwnd);
+        }
+        if (duplicate)
+            continue;
 
-            if (item.lastActivated > 0)
-            {
-                UserWindowInfo current = {};
-                for (size_t j = 0; j < g_userWindows.size(); ++j)
-                {
-                    if (g_userWindows[j].hwnd == group.representativeWindow)
-                    {
-                        current = g_userWindows[j];
-                        break;
-                    }
-                }
-                if (item.lastActivated > current.lastActivated)
-                {
-                    if (group.iconBitmap)
-                    {
-                        group.iconBitmap->Release();
-                        group.iconBitmap = nullptr;
-                    }
-                    if (group.ownIcon && group.icon)
-                    {
-                        DestroyIcon(group.icon);
-                        group.icon = nullptr;
-                    }
-                    group.representativeWindow = item.hwnd;
-                    group.icon = GetApplicationIcon(item.hwnd, item.processPath, &group.ownIcon);
-                }
-            }
-        }
+        AppGroup group = {};
+        group.processId = item.processId;
+        group.processPath = item.processPath;
+        group.appName = item.appName;
+        group.windowTitle = item.windowTitle;
+        group.representativeWindow = item.hwnd;
+        group.icon = GetApplicationIcon(item.hwnd, item.processPath, &group.ownIcon);
+        group.iconBitmap = nullptr;
+        group.windows.push_back(item.hwnd);
+        g_groups.push_back(group);
     }
 
+    // La ventana en primer plano va primero; el resto conserva el orden MRU.
     for (size_t i = 0; i < g_groups.size(); ++i)
     {
         if (g_groups[i].representativeWindow == foreground)
@@ -2161,7 +2294,7 @@ static void RefreshWindowList()
 
 static const std::wstring& MakeSlotText(const AppGroup& group)
 {
-    return group.appName;
+    return group.windowTitle.empty() ? group.appName : group.windowTitle;
 }
 
 static const std::wstring& MakeSlotDisplayText(const AppGroup& group)
@@ -2255,6 +2388,8 @@ static bool LoadDwmFunctions()
         GetProcAddress(g_dwmApi, "DwmRegisterThumbnail"));
     g_dwmUnregisterThumbnail = reinterpret_cast<DwmUnregisterThumbnailFn>(
         GetProcAddress(g_dwmApi, "DwmUnregisterThumbnail"));
+    g_dwmQueryThumbnailSourceSize = reinterpret_cast<DwmQueryThumbnailSourceSizeFn>(
+        GetProcAddress(g_dwmApi, "DwmQueryThumbnailSourceSize"));
     g_dwmUpdateThumbnailProperties = reinterpret_cast<DwmUpdateThumbnailPropertiesFn>(
         GetProcAddress(g_dwmApi, "DwmUpdateThumbnailProperties"));
     g_dwmSetWindowAttribute = reinterpret_cast<DwmSetWindowAttributeFn>(
@@ -2275,6 +2410,7 @@ static void UnloadDwmFunctions()
 {
     g_dwmRegisterThumbnail = nullptr;
     g_dwmUnregisterThumbnail = nullptr;
+    g_dwmQueryThumbnailSourceSize = nullptr;
     g_dwmUpdateThumbnailProperties = nullptr;
     g_dwmSetWindowAttribute = nullptr;
     g_dwmGetWindowAttribute = nullptr;
@@ -2318,7 +2454,9 @@ static void ApplySelectorVisuals(HWND hwnd)
     if (!LoadDwmFunctions() || !g_dwmSetWindowAttribute)
         return;
 
-    MARGINS margins = { -1, -1, -1, -1 };
+    const bool useTransparentDwmBackground = !IsFullscreenBackdropActive();
+    MARGINS margins = useTransparentDwmBackground
+        ? MARGINS{ -1, -1, -1, -1 } : MARGINS{ 0, 0, 0, 0 };
     typedef HRESULT (WINAPI* DwmExtendFrameIntoClientAreaFn)(HWND, const MARGINS*);
     DwmExtendFrameIntoClientAreaFn pDwmExtendFrameIntoClientArea =
         reinterpret_cast<DwmExtendFrameIntoClientAreaFn>(
@@ -2326,7 +2464,7 @@ static void ApplySelectorVisuals(HWND hwnd)
     if (pDwmExtendFrameIntoClientArea)
     {
         HRESULT frameResult = pDwmExtendFrameIntoClientArea(hwnd, &margins);
-        g_dwmGlassEnabled = SUCCEEDED(frameResult);
+        g_dwmGlassEnabled = useTransparentDwmBackground && SUCCEEDED(frameResult);
     }
 
     DWORD backdrop = kDwmSbtNone;
@@ -2403,6 +2541,634 @@ static HICON GetApplicationIcon(HWND hwnd, const std::wstring& processPath, bool
     return LoadIconW(nullptr, MAKEINTRESOURCEW(32512));
 }
 
+// Captura fullscreen estática. La imagen nítida conserva resolución nativa para
+// la revelación inicial; el blur se reduce antes del efecto y se escala al dibujar.
+static const IID kIidD2D1Factory1 = {
+    0xbb12d362, 0xdaee, 0x4b9a, { 0xaa, 0x1d, 0x14, 0xba, 0x40, 0x1c, 0xfa, 0x1f }
+};
+static const IID kIidDxgiDevice = {
+    0x54ec77fa, 0x1377, 0x44e6, { 0x8c, 0x32, 0x88, 0xfd, 0x5f, 0x44, 0xc8, 0x4c }
+};
+static const GUID kGaussianBlurEffectClsid = {
+    0x1feb6d69, 0x2fe6, 0x4ac9, { 0x8c, 0x58, 0x1d, 0x7f, 0x93, 0xe7, 0xa6, 0xa5 }
+};
+
+template <typename T> static void ReleaseComObject(T*& object)
+{
+    if (object) { object->Release(); object = nullptr; }
+}
+
+typedef HRESULT (WINAPI* D3D11CreateDeviceFn)(
+    IDXGIAdapter*, D3D_DRIVER_TYPE, HMODULE, UINT, const D3D_FEATURE_LEVEL*, UINT,
+    UINT, ID3D11Device**, D3D_FEATURE_LEVEL*, ID3D11DeviceContext**);
+
+static bool IsFullscreenBackdropActive()
+{
+    return g_blurredBackgroundReady;
+}
+
+static void FsSurfaceRelease(FsSurface& s)
+{
+    if (s.dc && s.oldBitmap)
+        SelectObject(s.dc, s.oldBitmap);
+    if (s.dc)
+        DeleteDC(s.dc);
+    if (s.bitmap)
+        DeleteObject(s.bitmap);
+    s = FsSurface();
+}
+
+static bool FsSurfaceCreate(FsSurface& s, HDC ref, int width, int height,
+                            const DWORD* source)
+{
+    FsSurfaceRelease(s);
+    BITMAPINFO info = {};
+    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = width;
+    info.bmiHeader.biHeight = -height;
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    s.bitmap = CreateDIBSection(ref, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (!s.bitmap || !bits)
+    {
+        FsSurfaceRelease(s);
+        return false;
+    }
+    s.dc = CreateCompatibleDC(ref);
+    if (!s.dc)
+    {
+        FsSurfaceRelease(s);
+        return false;
+    }
+    s.oldBitmap = SelectObject(s.dc, s.bitmap);
+    if (source)
+        std::memcpy(bits, source, static_cast<size_t>(width) * height * sizeof(DWORD));
+    s.width = width;
+    s.height = height;
+    return true;
+}
+
+static void ReleaseFullscreenD2DBitmaps()
+{
+    ReleaseComObject(g_fsSharpD2D);
+    ReleaseComObject(g_fsBlurD2D);
+}
+
+static void ReleaseShadowSprite()
+{
+    if (g_shadowSprite.dc && g_shadowSprite.oldBitmap)
+        SelectObject(g_shadowSprite.dc, g_shadowSprite.oldBitmap);
+    if (g_shadowSprite.dc)
+        DeleteDC(g_shadowSprite.dc);
+    if (g_shadowSprite.bitmap)
+        DeleteObject(g_shadowSprite.bitmap);
+    g_shadowSprite = ShadowSprite();
+}
+
+static void HideFullscreenBackdrop(bool releasePixels)
+{
+    g_blurredBackgroundReady = false;
+    g_selectorSceneOffset = POINT{};
+    g_lastBackdropPresence = -1.0f;
+    if (releasePixels)
+    {
+        FsSurfaceRelease(g_fsSharp);
+        FsSurfaceRelease(g_fsBlur);
+        FsSurfaceRelease(g_fsBack);
+        FsSurfaceRelease(g_fsScene);
+        ReleaseFullscreenD2DBitmaps();
+        ReleaseShadowSprite();
+        std::vector<DWORD>().swap(g_capturedDesktopPixels);
+        std::vector<DWORD>().swap(g_blurredDesktopPixels);
+        g_blurredDesktopBitmapInfo = BITMAPINFO();
+        g_blurredMonitorRect = {};
+        g_blurredInitialRect = {};
+    }
+}
+
+static bool CaptureAndBlurMonitor(const RECT& monitorRect)
+{
+    const int width = monitorRect.right - monitorRect.left;
+    const int height = monitorRect.bottom - monitorRect.top;
+    if (width <= 0 || height <= 0 || width > 16384 || height > 16384 ||
+        static_cast<unsigned long long>(width) * height > 20000000ULL)
+    {
+        Wh_Log(L"[FS] tamano de monitor no valido: %d x %d", width, height);
+        return false;
+    }
+
+    HDC screenDc = GetDC(nullptr);
+    HDC captureDc = screenDc ? CreateCompatibleDC(screenDc) : nullptr;
+    if (!screenDc || !captureDc)
+    {
+        Wh_Log(L"[FS] GetDC/CreateCompatibleDC fallo (%lu)", GetLastError());
+        if (captureDc) DeleteDC(captureDc);
+        if (screenDc) ReleaseDC(nullptr, screenDc);
+        return false;
+    }
+    BITMAPINFO captureInfo = {};
+    captureInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    captureInfo.bmiHeader.biWidth = width;
+    captureInfo.bmiHeader.biHeight = -height; // Top-down; matches D2D row order.
+    captureInfo.bmiHeader.biPlanes = 1;
+    captureInfo.bmiHeader.biBitCount = 32;
+    captureInfo.bmiHeader.biCompression = BI_RGB;
+    void* captureBits = nullptr;
+    HBITMAP captureBitmap = CreateDIBSection(screenDc, &captureInfo, DIB_RGB_COLORS,
+                                              &captureBits, nullptr, 0);
+    HGDIOBJ oldBitmap = captureBitmap ? SelectObject(captureDc, captureBitmap) : nullptr;
+    const bool captured = captureBitmap && captureBits &&
+        BitBlt(captureDc, 0, 0, width, height, screenDc,
+               monitorRect.left, monitorRect.top, SRCCOPY | CAPTUREBLT);
+    std::vector<DWORD> input;
+    if (captured)
+    {
+        try
+        {
+            input.resize(static_cast<size_t>(width) * height);
+            const DWORD* pixels = static_cast<const DWORD*>(captureBits);
+            for (size_t i = 0; i < input.size(); ++i)
+                input[i] = pixels[i] | 0xff000000u;
+        }
+        catch (...)
+        {
+            input.clear();
+        }
+    }
+    if (oldBitmap) SelectObject(captureDc, oldBitmap);
+    if (captureBitmap) DeleteObject(captureBitmap);
+    DeleteDC(captureDc);
+    ReleaseDC(nullptr, screenDc);
+    if (input.empty())
+    {
+        Wh_Log(L"[FS] BitBlt/captura fallo (%d x %d)", width, height);
+        return false;
+    }
+    g_capturedDesktopPixels.swap(input);
+
+    HMODULE d3d11 = LoadLibraryExW(L"d3d11.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    HMODULE d2d1 = LoadLibraryExW(L"d2d1.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    D3D11CreateDeviceFn createD3D = d3d11 ? reinterpret_cast<D3D11CreateDeviceFn>(
+        GetProcAddress(d3d11, "D3D11CreateDevice")) : nullptr;
+    D2D1CreateFactoryFn createD2D = d2d1 ? reinterpret_cast<D2D1CreateFactoryFn>(
+        GetProcAddress(d2d1, "D2D1CreateFactory")) : nullptr;
+
+    ID3D11Device* d3dDevice = nullptr;
+    ID3D11DeviceContext* d3dContext = nullptr;
+    IDXGIDevice* dxgiDevice = nullptr;
+    ID2D1Factory1* factory1 = nullptr;
+    ID2D1Device* d2dDevice = nullptr;
+    ID2D1DeviceContext* d2dContext = nullptr;
+    ID2D1Bitmap1* inputBitmap = nullptr;
+    ID2D1Bitmap1* outputBitmap = nullptr;
+    ID2D1Effect* blurEffect = nullptr;
+    ID2D1Bitmap1* cpuBitmap = nullptr;
+    std::vector<DWORD> blurInput;
+    int blurWidth = 0, blurHeight = 0;
+    GetFullscreenBlurDimensions(width, height, blurWidth, blurHeight);
+    bool success = false;
+
+    if (!createD3D || !createD2D)
+        { Wh_Log(L"[FS] CaptureAndBlurMonitor fallo en la linea %d", __LINE__); goto cleanup; }
+    {
+        const UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+        HRESULT hr = createD3D(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags,
+                               nullptr, 0, D3D11_SDK_VERSION,
+                               &d3dDevice, nullptr, &d3dContext);
+        if (FAILED(hr))
+        {
+            ReleaseComObject(d3dContext);
+            ReleaseComObject(d3dDevice);
+            hr = createD3D(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, flags,
+                           nullptr, 0, D3D11_SDK_VERSION,
+                           &d3dDevice, nullptr, &d3dContext);
+        }
+        if (FAILED(hr) || !d3dDevice || !d3dContext)
+            { Wh_Log(L"[FS] CaptureAndBlurMonitor fallo en la linea %d", __LINE__); goto cleanup; }
+    }
+    if (FAILED(d3dDevice->QueryInterface(kIidDxgiDevice,
+                                         reinterpret_cast<void**>(&dxgiDevice))))
+        { Wh_Log(L"[FS] CaptureAndBlurMonitor fallo en la linea %d", __LINE__); goto cleanup; }
+    if (FAILED(createD2D(D2D1_FACTORY_TYPE_SINGLE_THREADED, kIidD2D1Factory1,
+                         nullptr, reinterpret_cast<void**>(&factory1))) || !factory1)
+        { Wh_Log(L"[FS] CaptureAndBlurMonitor fallo en la linea %d", __LINE__); goto cleanup; }
+    if (FAILED(factory1->CreateDevice(dxgiDevice, &d2dDevice)) || !d2dDevice ||
+        FAILED(d2dDevice->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
+                                               &d2dContext)) || !d2dContext)
+        { Wh_Log(L"[FS] CaptureAndBlurMonitor fallo en la linea %d", __LINE__); goto cleanup; }
+
+    {
+        // Downsample on CPU before uploading: the Gaussian blur processes only
+        // 1/16 of the monitor pixels, greatly reducing GPU work and readback cost.
+        try
+        {
+            blurInput.resize(static_cast<size_t>(blurWidth) * blurHeight);
+            for (int y = 0; y < blurHeight; ++y)
+            {
+                const int sourceY = std::min(height - 1, y * kFullscreenBlurDownsample);
+                const DWORD* sourceRow = g_capturedDesktopPixels.data() +
+                                         static_cast<size_t>(sourceY) * width;
+                DWORD* targetRow = blurInput.data() + static_cast<size_t>(y) * blurWidth;
+                for (int x = 0; x < blurWidth; ++x)
+                {
+                    const int sourceX = std::min(width - 1, x * kFullscreenBlurDownsample);
+                    targetRow[x] = sourceRow[sourceX];
+                }
+            }
+        }
+        catch (...)
+        {
+            blurInput.clear();
+            Wh_Log(L"[FS] No se pudo reservar el buffer reducido del blur");
+            goto cleanup;
+        }
+
+        const D2D1_BITMAP_PROPERTIES1 inputProps = D2D1::BitmapProperties1(
+            D2D1_BITMAP_OPTIONS_NONE,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
+                              D2D1_ALPHA_MODE_PREMULTIPLIED), 96.0f, 96.0f);
+        if (FAILED(d2dContext->CreateBitmap(D2D1::SizeU(blurWidth, blurHeight),
+                blurInput.data(),
+                static_cast<UINT32>(blurWidth * sizeof(DWORD)), &inputProps, &inputBitmap)) ||
+            !inputBitmap)
+            { Wh_Log(L"[FS] CaptureAndBlurMonitor fallo en la linea %d", __LINE__); goto cleanup; }
+    }
+    if (FAILED(d2dContext->CreateEffect(kGaussianBlurEffectClsid, &blurEffect)) ||
+        !blurEffect)
+        { Wh_Log(L"[FS] CaptureAndBlurMonitor fallo en la linea %d", __LINE__); goto cleanup; }
+    blurEffect->SetInput(0, inputBitmap);
+    blurEffect->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION,
+                         kFullscreenBlurStandardDeviation /
+                             static_cast<float>(kFullscreenBlurDownsample));
+    // Gaussian Blur's default optimization is Balanced. Leave it at that default
+    // to remain compatible with SDK headers that omit the enum symbol.
+    blurEffect->SetValue(D2D1_GAUSSIANBLUR_PROP_BORDER_MODE,
+                         D2D1_BORDER_MODE_HARD);
+
+    {
+        // Ruta solo Direct2D: el destino del blur y la copia legible por CPU
+        // son bitmaps de D2D. Se evita CreateBitmapFromDxgiSurface, que fallaba
+        // en este equipo.
+        const D2D1_SIZE_U bitmapSize = D2D1::SizeU(blurWidth, blurHeight);
+        const D2D1_PIXEL_FORMAT bitmapFormat = D2D1::PixelFormat(
+            DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED);
+
+        HRESULT hr = d2dContext->CreateBitmap(
+            bitmapSize, nullptr, 0,
+            D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET, bitmapFormat,
+                                    96.0f, 96.0f),
+            &outputBitmap);
+        if (FAILED(hr) || !outputBitmap)
+        {
+            Wh_Log(L"[FS] CreateBitmap(target) hr=0x%08X", static_cast<unsigned>(hr));
+            goto cleanup;
+        }
+
+        d2dContext->SetTarget(outputBitmap);
+        d2dContext->BeginDraw();
+        d2dContext->Clear(D2D1::ColorF(0, 0, 0, 0));
+        d2dContext->DrawImage(blurEffect);
+        hr = d2dContext->EndDraw();
+        d2dContext->SetTarget(nullptr);
+        if (FAILED(hr))
+        {
+            Wh_Log(L"[FS] EndDraw hr=0x%08X", static_cast<unsigned>(hr));
+            goto cleanup;
+        }
+
+        hr = d2dContext->CreateBitmap(
+            bitmapSize, nullptr, 0,
+            D2D1::BitmapProperties1(
+                static_cast<D2D1_BITMAP_OPTIONS>(
+                    static_cast<UINT>(D2D1_BITMAP_OPTIONS_CPU_READ) |
+                    static_cast<UINT>(D2D1_BITMAP_OPTIONS_CANNOT_DRAW)),
+                bitmapFormat, 96.0f, 96.0f),
+            &cpuBitmap);
+        if (FAILED(hr) || !cpuBitmap)
+        {
+            Wh_Log(L"[FS] CreateBitmap(cpu) hr=0x%08X", static_cast<unsigned>(hr));
+            goto cleanup;
+        }
+        hr = cpuBitmap->CopyFromBitmap(nullptr, outputBitmap, nullptr);
+        if (FAILED(hr))
+        {
+            Wh_Log(L"[FS] CopyFromBitmap hr=0x%08X", static_cast<unsigned>(hr));
+            goto cleanup;
+        }
+        D2D1_MAPPED_RECT mapped = {};
+        hr = cpuBitmap->Map(D2D1_MAP_OPTIONS_READ, &mapped);
+        if (FAILED(hr) || !mapped.bits)
+        {
+            Wh_Log(L"[FS] Map hr=0x%08X", static_cast<unsigned>(hr));
+            goto cleanup;
+        }
+        try
+        {
+            g_blurredDesktopPixels.resize(static_cast<size_t>(blurWidth) * blurHeight);
+            for (int y = 0; y < blurHeight; ++y)
+            {
+                const BYTE* src = mapped.bits + static_cast<size_t>(y) * mapped.pitch;
+                DWORD* dst = g_blurredDesktopPixels.data() +
+                             static_cast<size_t>(y) * blurWidth;
+                for (int x = 0; x < blurWidth; ++x)
+                {
+                    const BYTE b = static_cast<BYTE>(src[x * 4 + 0] * kFullscreenBackdropBrightness);
+                    const BYTE g = static_cast<BYTE>(src[x * 4 + 1] * kFullscreenBackdropBrightness);
+                    const BYTE r = static_cast<BYTE>(src[x * 4 + 2] * kFullscreenBackdropBrightness);
+                    dst[x] = 0xff000000u | (static_cast<DWORD>(r) << 16) |
+                             (static_cast<DWORD>(g) << 8) | b;
+                }
+            }
+        }
+        catch (...)
+        {
+            g_blurredDesktopPixels.clear();
+        }
+        cpuBitmap->Unmap();
+        if (g_blurredDesktopPixels.size() == static_cast<size_t>(blurWidth) * blurHeight)
+            success = true;
+    }
+
+cleanup:
+    if (d2dContext) d2dContext->SetTarget(nullptr);
+    ReleaseComObject(cpuBitmap);
+    ReleaseComObject(blurEffect);
+    ReleaseComObject(outputBitmap);
+    ReleaseComObject(inputBitmap);
+    ReleaseComObject(d2dContext);
+    ReleaseComObject(d2dDevice);
+    ReleaseComObject(factory1);
+    ReleaseComObject(dxgiDevice);
+    ReleaseComObject(d3dContext);
+    ReleaseComObject(d3dDevice);
+    if (d2d1) FreeLibrary(d2d1);
+    if (d3d11) FreeLibrary(d3d11);
+    if (!success)
+    {
+        g_capturedDesktopPixels.clear();
+        g_blurredDesktopPixels.clear();
+    }
+    return success;
+}
+
+// Draw the captured desktop directly to the selector's HDC. This keeps the
+// fullscreen background independent of Direct2D's ability to allocate a
+// monitor-sized bitmap; the GDI scene renderer draws the cards over it.
+static bool DrawFullscreenBackgroundGdi(HDC hdc)
+{
+    if (!hdc)
+        return false;
+
+    const int width = g_blurredMonitorRect.right - g_blurredMonitorRect.left;
+    const int height = g_blurredMonitorRect.bottom - g_blurredMonitorRect.top;
+    if (width <= 0 || height <= 0)
+        return false;
+
+    if (!g_fsSharp.dc || !g_fsBlur.dc)
+    {
+        int blurWidth = 0, blurHeight = 0;
+        GetFullscreenBlurDimensions(width, height, blurWidth, blurHeight);
+        const size_t expectedPixels = static_cast<size_t>(width) * height;
+        const size_t expectedBlurPixels = static_cast<size_t>(blurWidth) * blurHeight;
+        if (g_capturedDesktopPixels.size() != expectedPixels ||
+            g_blurredDesktopPixels.size() != expectedBlurPixels)
+            return false;
+        if (!FsSurfaceCreate(g_fsSharp, hdc, width, height,
+                             g_capturedDesktopPixels.data()) ||
+            !FsSurfaceCreate(g_fsBlur, hdc, blurWidth, blurHeight,
+                             g_blurredDesktopPixels.data()))
+        {
+            FsSurfaceRelease(g_fsSharp);
+            FsSurfaceRelease(g_fsBlur);
+            return false;
+        }
+    }
+
+    if (!BitBlt(hdc, 0, 0, width, height, g_fsSharp.dc, 0, 0, SRCCOPY))
+        return false;
+
+    // La revelación del desenfoque nace del centro del monitor (no de los
+    // bordes del rectángulo del selector) y crece hasta cubrir todo el monitor,
+    // con el mismo progreso (g_scenePresence) que anima el resto de la escena.
+    const float progress = Clamp01(g_scenePresence);
+    const int centerX = width / 2;
+    const int centerY = height / 2;
+    int left = 0;
+    int right = width;
+    int top = 0;
+    int bottom = height;
+    if (g_animationStyle == AnimationStyle::Rct)
+    {
+        // RCT fullscreen reveal: begin as a horizontal line across the screen,
+        // then expand vertically from the center until the blur covers the monitor.
+        const int halfHeight = std::max(1, static_cast<int>(centerY * progress));
+        top = std::max(0, centerY - halfHeight);
+        bottom = std::min(height, centerY + halfHeight);
+    }
+    else
+    {
+        left = std::max(0, static_cast<int>(centerX - centerX * progress));
+        top = std::max(0, static_cast<int>(centerY - centerY * progress));
+        right = std::min(width, static_cast<int>(centerX + (width - centerX) * progress));
+        bottom = std::min(height, static_cast<int>(centerY + (height - centerY) * progress));
+    }
+    if (right <= left || bottom <= top)
+        return true;
+
+    const float zoom = 1.0f + std::min(0.02f,
+        std::max(0.0f, g_scenePresence - 1.0f) * 0.10f);
+    const int drawW = static_cast<int>(width * zoom);
+    const int drawH = static_cast<int>(height * zoom);
+
+    bool success;
+    if (drawW == width && drawH == height)
+    {
+        success = StretchBlt(hdc, left, top, right - left, bottom - top,
+                             g_fsBlur.dc,
+                             left * g_fsBlur.width / width,
+                             top * g_fsBlur.height / height,
+                             std::max(1, (right - left) * g_fsBlur.width / width),
+                             std::max(1, (bottom - top) * g_fsBlur.height / height),
+                             SRCCOPY) != FALSE;
+    }
+    else
+    {
+        const int clipState = SaveDC(hdc);
+        if (!clipState)
+            return false;
+        IntersectClipRect(hdc, left, top, right, bottom);
+        SetStretchBltMode(hdc, COLORONCOLOR);
+        success = StretchBlt(hdc, (width - drawW) / 2, (height - drawH) / 2,
+                             drawW, drawH, g_fsBlur.dc, 0, 0,
+                             g_fsBlur.width, g_fsBlur.height,
+                             SRCCOPY) != FALSE;
+        RestoreDC(hdc, clipState);
+    }
+    if (success)
+        g_fullscreenHdcDrawFailureLogged = false;
+    return success;
+}
+
+// Direct2D: el escritorio nítido conserva resolución nativa; el bitmap de blur
+// ocupa 1/16 de los píxeles. Ambos se reconstruyen desde RAM si cambia el target.
+static bool EnsureFullscreenD2DBitmaps()
+{
+    if (g_fsSharpD2D && g_fsBlurD2D)
+        return true;
+    if (!g_d2dRenderTarget)
+        return false;
+    const int width = g_blurredMonitorRect.right - g_blurredMonitorRect.left;
+    const int height = g_blurredMonitorRect.bottom - g_blurredMonitorRect.top;
+    int blurWidth = 0, blurHeight = 0;
+    GetFullscreenBlurDimensions(width, height, blurWidth, blurHeight);
+    const size_t expectedSharp = static_cast<size_t>(width) * height;
+    const size_t expectedBlur = static_cast<size_t>(blurWidth) * blurHeight;
+    if (width <= 0 || height <= 0 ||
+        g_capturedDesktopPixels.size() != expectedSharp ||
+        g_blurredDesktopPixels.size() != expectedBlur)
+        return false;
+
+    ReleaseFullscreenD2DBitmaps();
+    const D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE));
+    HRESULT hr = g_d2dRenderTarget->CreateBitmap(
+        D2D1::SizeU(width, height), g_capturedDesktopPixels.data(),
+        static_cast<UINT32>(width * sizeof(DWORD)), &props, &g_fsSharpD2D);
+    if (SUCCEEDED(hr) && g_fsSharpD2D)
+        hr = g_d2dRenderTarget->CreateBitmap(
+            D2D1::SizeU(blurWidth, blurHeight), g_blurredDesktopPixels.data(),
+            static_cast<UINT32>(blurWidth * sizeof(DWORD)), &props, &g_fsBlurD2D);
+    if (FAILED(hr) || !g_fsSharpD2D || !g_fsBlurD2D)
+    {
+        Wh_Log(L"[FS] CreateBitmap D2D hr=0x%08X", static_cast<unsigned>(hr));
+        ReleaseFullscreenD2DBitmaps();
+        return false;
+    }
+    return true;
+}
+
+// Fondo fullscreen dentro de la escena D2D. Usa g_scenePresence, el mismo progreso
+// que apertura/cierre y carrusel; no crea un reloj ni una animación independiente.
+// Se dibuja antes del transform de escena para mantener la continuidad espacial.
+static void DrawFullscreenBackgroundD2D()
+{
+    if (!g_d2dRenderTarget || !g_fsSharpD2D || !g_fsBlurD2D)
+        return;
+    const float width = static_cast<float>(g_blurredMonitorRect.right - g_blurredMonitorRect.left);
+    const float height = static_cast<float>(g_blurredMonitorRect.bottom - g_blurredMonitorRect.top);
+
+    g_d2dRenderTarget->DrawBitmap(
+        g_fsSharpD2D, D2D1::RectF(0.0f, 0.0f, width, height), 1.0f,
+        D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+
+    // Revelación desde el centro del monitor hasta cubrirlo.
+    const float progress = Clamp01(g_scenePresence);
+    const float cx = width * 0.5f;
+    const float cy = height * 0.5f;
+    float left = 0.0f;
+    float top = 0.0f;
+    float right = width;
+    float bottom = height;
+    if (g_animationStyle == AnimationStyle::Rct)
+    {
+        // RCT starts as a full-width horizontal line and reveals vertically.
+        const float halfHeight = std::max(1.0f, cy * progress);
+        top = cy - halfHeight;
+        bottom = cy + halfHeight;
+    }
+    else
+    {
+        left = cx - cx * progress;
+        top = cy - cy * progress;
+        right = cx + (width - cx) * progress;
+        bottom = cy + (height - cy) * progress;
+    }
+    if (right <= left || bottom <= top)
+        return;
+
+    const float zoom = 1.0f + std::min(0.02f,
+        std::max(0.0f, g_scenePresence - 1.0f) * 0.10f);
+    const float dw = width * zoom;
+    const float dh = height * zoom;
+    g_d2dRenderTarget->PushAxisAlignedClip(
+        D2D1::RectF(left, top, right, bottom), D2D1_ANTIALIAS_MODE_ALIASED);
+    g_d2dRenderTarget->DrawBitmap(
+        g_fsBlurD2D,
+        D2D1::RectF((width - dw) * 0.5f, (height - dh) * 0.5f,
+                    (width + dw) * 0.5f, (height + dh) * 0.5f),
+        1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    // Pattern Waves shares the exact fullscreen reveal clip and presence curve.
+    // Its procedural field is evaluated in monitor coordinates, not selector space.
+    if (IsPatternWavesActive())
+    {
+        RECT fullscreenPatternRect = { 0, 0,
+            static_cast<LONG>(width), static_cast<LONG>(height) };
+        DrawPatternWaves(fullscreenPatternRect);
+    }
+    g_d2dRenderTarget->PopAxisAlignedClip();
+}
+
+static void LogFullscreenHdcDrawFailure()
+{
+    if (g_fullscreenHdcDrawFailureLogged)
+        return;
+    Wh_Log(L"Fullscreen background HDC draw failed");
+    g_fullscreenHdcDrawFailureLogged = true;
+}
+
+static bool PrepareFullscreenBackdrop(const RECT& monitorRect, const RECT& selectorRect)
+{
+    HideFullscreenBackdrop(true);
+    if (g_baseBackgroundMode != BaseBackgroundMode::Fullscreen)
+    {
+        Wh_Log(L"[FS] modo de fondo no es Fullscreen (modo=%d)", static_cast<int>(g_baseBackgroundMode));
+        return false;
+    }
+    if (!CaptureAndBlurMonitor(monitorRect))
+    {
+        Wh_Log(L"Fullscreen background capture/blur failed; falling back to DWM");
+        return false;
+    }
+
+    const int width = monitorRect.right - monitorRect.left;
+    const int height = monitorRect.bottom - monitorRect.top;
+    g_blurredMonitorRect = monitorRect;
+    g_blurredInitialRect = RECT{
+        selectorRect.left - monitorRect.left,
+        selectorRect.top - monitorRect.top,
+        selectorRect.right - monitorRect.left,
+        selectorRect.bottom - monitorRect.top
+    };
+    g_blurredDesktopBitmapInfo = BITMAPINFO();
+    g_blurredDesktopBitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    int blurWidth = 0, blurHeight = 0;
+    GetFullscreenBlurDimensions(width, height, blurWidth, blurHeight);
+    g_blurredDesktopBitmapInfo.bmiHeader.biWidth = blurWidth;
+    g_blurredDesktopBitmapInfo.bmiHeader.biHeight = -blurHeight;
+    g_blurredDesktopBitmapInfo.bmiHeader.biPlanes = 1;
+    g_blurredDesktopBitmapInfo.bmiHeader.biBitCount = 32;
+    g_blurredDesktopBitmapInfo.bmiHeader.biCompression = BI_RGB;
+    // The pixel buffers are rendered directly into the selector HDC. Do not
+    // make readiness depend on creating monitor-sized Direct2D bitmaps.
+    g_blurredBackgroundReady = true;
+    Wh_Log(L"Fullscreen background ready (%d x %d)", width, height);
+    return true;
+}
+
+static void UpdateFullscreenBackdrop()
+{
+    // El fondo solo cambia cuando cambia la presencia: mientras está quieto no
+    // se invalida el monitor entero (el frame loop invalida solo las cards).
+    if (g_blurredBackgroundReady && g_selector && IsWindow(g_selector) &&
+        g_scenePresence != g_lastBackdropPresence)
+    {
+        g_lastBackdropPresence = g_scenePresence;
+        InvalidateRect(g_selector, nullptr, FALSE);
+    }
+}
+
 // GESTIÓN DE DIRECT2D Y DIRECTWRITE
 
 static void ReleaseDWriteFormats()
@@ -2418,9 +3184,14 @@ static bool LoadD2DAndDWrite()
 {
     // Los TextFormat dependen de g_uiScale: si la escala cambió (otro monitor /
     // otro DPI) se reconstruyen en lugar de reutilizar formatos obsoletos.
-    if (g_d2dFactory && g_d2dDCRenderTarget && g_dwriteFactory &&
+    if (g_d2dFactory && g_d2dRenderTarget && g_dwriteFactory &&
         g_dwriteFormatsScale == g_uiScale.value)
-        return true;
+    {
+        if (!g_d2dBrush)
+            g_d2dRenderTarget->CreateSolidColorBrush(
+                D2D1::ColorF(D2D1::ColorF::White), &g_d2dBrush);
+        return g_d2dBrush != nullptr;
+    }
 
     if (!g_d2dApi)
         g_d2dApi = LoadLibraryExW(L"d2d1.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -2450,7 +3221,8 @@ static bool LoadD2DAndDWrite()
         );
         if (SUCCEEDED(g_d2dFactory->CreateDCRenderTarget(&props, &g_d2dDCRenderTarget)))
         {
-            g_d2dDCRenderTarget->CreateSolidColorBrush(
+            g_d2dRenderTarget = g_d2dDCRenderTarget;
+            g_d2dRenderTarget->CreateSolidColorBrush(
                 D2D1::ColorF(D2D1::ColorF::White), &g_d2dBrush);
         }
     }
@@ -2720,6 +3492,8 @@ static void UnloadD2DAndDWrite()
     if (g_closeButtonGeometry) { g_closeButtonGeometry->Release(); g_closeButtonGeometry = nullptr; }
     g_closeButtonGeometryRect = {};
     if (g_d2dBrush) { g_d2dBrush->Release(); g_d2dBrush = nullptr; }
+    g_d2dRenderTarget = nullptr;
+    if (g_fsHwndRenderTarget) { g_fsHwndRenderTarget->Release(); g_fsHwndRenderTarget = nullptr; }
     if (g_d2dDCRenderTarget) { g_d2dDCRenderTarget->Release(); g_d2dDCRenderTarget = nullptr; }
     if (g_d2dFactory) { g_d2dFactory->Release(); g_d2dFactory = nullptr; }
 
@@ -2751,12 +3525,21 @@ static void ReleaseD2DDeviceResources()
         }
     }
     ReleaseCachedD2DObjects();
+    ReleaseFullscreenD2DBitmaps();
     if (g_closeAccentBrush) { g_closeAccentBrush->Release(); g_closeAccentBrush = nullptr; }
     if (g_backgroundSpotlightBrush) { g_backgroundSpotlightBrush->Release(); g_backgroundSpotlightBrush = nullptr; }
     if (g_ambientShadowBrush) { g_ambientShadowBrush->Release(); g_ambientShadowBrush = nullptr; }
     g_backgroundSpotlightBrushColor = CLR_INVALID;
     if (g_d2dBrush) { g_d2dBrush->Release(); g_d2dBrush = nullptr; }
-    if (g_d2dDCRenderTarget) { g_d2dDCRenderTarget->Release(); g_d2dDCRenderTarget = nullptr; }
+    if (g_d2dRenderTarget == g_fsHwndRenderTarget)
+    {
+        if (g_fsHwndRenderTarget) { g_fsHwndRenderTarget->Release(); g_fsHwndRenderTarget = nullptr; }
+    }
+    else if (g_d2dRenderTarget == g_d2dDCRenderTarget)
+    {
+        if (g_d2dDCRenderTarget) { g_d2dDCRenderTarget->Release(); g_d2dDCRenderTarget = nullptr; }
+    }
+    g_d2dRenderTarget = nullptr;
     RequestFrame();
 }
 
@@ -3245,6 +4028,11 @@ static int ResolveGroupIndex(int slot)
     if (count <= 0)
         return -1;
 
+    // Avoid rendering/registering the same window in every carousel slot.
+    // Keep the center slot so the normal card geometry and selection behavior remain intact.
+    if (g_singleWindowCard && count == 1 && slot != GetCarouselCenterSlot())
+        return -1;
+
     int index = g_selected + (slot - GetCarouselCenterSlot());
     while (index < 0)
         index += count;
@@ -3278,6 +4066,8 @@ static int GetSlotAtPoint(POINT ptClient)
     for (int i = 0; i < GetCarouselSlotCount(); ++i)
     {
         int slot = i;
+        if (ResolveGroupIndex(slot) < 0)
+            continue;
         RECT rc = GetSlotCardRect(slot);
         if (PtInRect(&rc, ptClient))
             return slot;
@@ -3336,7 +4126,7 @@ static void DrawCardGlowAndBorderGDI(HDC hdc, const RECT& rect, int radius, bool
 static void PaintBottomShadowD2D(const RECT& objectRect, float radius,
                                  float strength)
 {
-    if (!g_d2dDCRenderTarget || !g_d2dBrush)
+    if (!g_d2dRenderTarget || !g_d2dBrush)
         return;
     const int layers = 3;
     for (int i = 0; i < layers; ++i)
@@ -3358,7 +4148,7 @@ static void PaintBottomShadowD2D(const RECT& objectRect, float radius,
                         static_cast<float>(shadow.right),
                         static_cast<float>(shadow.bottom)),
             radius + static_cast<float>(spread), radius + static_cast<float>(spread));
-        g_d2dDCRenderTarget->FillRoundedRectangle(&shadowRect, g_d2dBrush);
+        g_d2dRenderTarget->FillRoundedRectangle(&shadowRect, g_d2dBrush);
     }
 }
 
@@ -3386,6 +4176,232 @@ static void PaintBottomShadowGDI(HDC hdc, const RECT& objectRect, int radius)
         g_selectObject(hdc, oldBrush);
         g_deleteObject(brush);
     }
+}
+
+// SOMBRAS SUAVES DE LAS CARDS
+//
+// Perfil de sombra: alfa(d) = fuerza * 0.5 * erfc(d / (sigma * sqrt2)), donde d es
+// la distancia con signo al borde de la card. Es la caída de un borde desenfocado
+// con gaussiana, sin bandas visibles. La sombra rodea toda la card y se desplaza
+// hacia abajo.
+
+static float ShadowSigmaPx() { return static_cast<float>(ScaleLayoutPx(9.0f)); }
+static float ShadowOffsetPx() { return static_cast<float>(ScaleLayoutPx(7.0f)); }
+static float ShadowProfile(float distance, float sigma, float strength)
+{
+    return strength * 0.5f *
+           static_cast<float>(std::erfc(distance / (sigma * 1.41421356f)));
+}
+
+static bool EnsureAlphaBlend()
+{
+    if (g_pAlphaBlend)
+        return true;
+    if (!g_msimg32Module)
+        g_msimg32Module = LoadLibraryExW(L"msimg32.dll", nullptr,
+                                         LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (!g_msimg32Module)
+        return false;
+    g_pAlphaBlend = reinterpret_cast<AlphaBlendProc>(
+        GetProcAddress(g_msimg32Module, "AlphaBlend"));
+    return g_pAlphaBlend != nullptr;
+}
+
+static bool EnsureShadowSprite(HDC ref, int radius, int margin)
+{
+    if (g_shadowSprite.dc && g_shadowSprite.radius == radius &&
+        g_shadowSprite.margin == margin)
+        return true;
+    ReleaseShadowSprite();
+
+    const int size = 2 * (margin + radius) + 2;
+    BITMAPINFO info = {};
+    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = size;
+    info.bmiHeader.biHeight = -size;
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HBITMAP bitmap = CreateDIBSection(ref, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (!bitmap || !bits)
+    {
+        if (bitmap) DeleteObject(bitmap);
+        return false;
+    }
+    HDC dc = CreateCompatibleDC(ref);
+    if (!dc)
+    {
+        DeleteObject(bitmap);
+        return false;
+    }
+
+    // La forma interior mide 2*radius+2: el centro (2 px) se estira luego, de
+    // modo que el perfil de los lados rectos es exacto a cualquier tamaño.
+    const float sigma = std::max(1.0f, static_cast<float>(margin) / 3.0f);
+    const float center = static_cast<float>(size) * 0.5f;
+    const float r = static_cast<float>(radius);
+    DWORD* pixels = static_cast<DWORD*>(bits);
+    for (int y = 0; y < size; ++y)
+    {
+        for (int x = 0; x < size; ++x)
+        {
+            const float qx = fabsf(static_cast<float>(x) + 0.5f - center) - 1.0f;
+            const float qy = fabsf(static_cast<float>(y) + 0.5f - center) - 1.0f;
+            const float ox = std::max(qx, 0.0f);
+            const float oy = std::max(qy, 0.0f);
+            const float sd = sqrtf(ox * ox + oy * oy) +
+                             std::min(std::max(qx, qy), 0.0f) - r;
+            const float a = std::max(0.0f, std::min(1.0f, ShadowProfile(sd, sigma, 1.0f)));
+            // Premultiplicado: el color es negro, solo cuenta el alfa.
+            pixels[y * size + x] = static_cast<DWORD>(a * 255.0f + 0.5f) << 24;
+        }
+    }
+
+    g_shadowSprite.dc = dc;
+    g_shadowSprite.bitmap = bitmap;
+    g_shadowSprite.oldBitmap = SelectObject(dc, bitmap);
+    g_shadowSprite.size = size;
+    g_shadowSprite.margin = margin;
+    g_shadowSprite.radius = radius;
+    return true;
+}
+
+static void PaintCardShadowGDI(HDC hdc, const RECT& cardRect, int radius,
+                               float strength)
+{
+    if (!hdc || strength <= 0.0f)
+        return;
+    const int margin = std::max(6, static_cast<int>(ShadowSigmaPx() * 3.0f));
+    const int offsetY = static_cast<int>(ShadowOffsetPx());
+    const int corner = margin + radius;
+
+    const RECT outer = {
+        cardRect.left - margin, cardRect.top + offsetY - margin,
+        cardRect.right + margin, cardRect.bottom + offsetY + margin
+    };
+    const int w = outer.right - outer.left;
+    const int h = outer.bottom - outer.top;
+    if (!EnsureAlphaBlend() || w <= 2 * corner + 1 || h <= 2 * corner + 1 ||
+        !EnsureShadowSprite(hdc, radius, margin))
+    {
+        PaintBottomShadowGDI(hdc, cardRect, radius);
+        return;
+    }
+
+    const int s = g_shadowSprite.size;
+    const int mid = s - 2 * corner;  // 2 px estirables
+    BLENDFUNCTION blend = {};
+    blend.BlendOp = AC_SRC_OVER;
+    blend.SourceConstantAlpha = static_cast<BYTE>(
+        std::max(0.0f, std::min(1.0f, strength)) * 255.0f + 0.5f);
+    blend.AlphaFormat = AC_SRC_ALPHA;
+    HDC src = g_shadowSprite.dc;
+    auto blit = [&](int dx, int dy, int dw, int dh, int sx, int sy, int sw, int sh) {
+        if (dw > 0 && dh > 0)
+            g_pAlphaBlend(hdc, dx, dy, dw, dh, src, sx, sy, sw, sh, blend);
+    };
+    // Esquinas 1:1.
+    blit(outer.left, outer.top, corner, corner, 0, 0, corner, corner);
+    blit(outer.right - corner, outer.top, corner, corner, s - corner, 0, corner, corner);
+    blit(outer.left, outer.bottom - corner, corner, corner, 0, s - corner, corner, corner);
+    blit(outer.right - corner, outer.bottom - corner, corner, corner,
+         s - corner, s - corner, corner, corner);
+    // Lados estirados.
+    blit(outer.left + corner, outer.top, w - 2 * corner, corner,
+         corner, 0, mid, corner);
+    blit(outer.left + corner, outer.bottom - corner, w - 2 * corner, corner,
+         corner, s - corner, mid, corner);
+    blit(outer.left, outer.top + corner, corner, h - 2 * corner,
+         0, corner, corner, mid);
+    blit(outer.right - corner, outer.top + corner, corner, h - 2 * corner,
+         s - corner, corner, corner, mid);
+    // Centro (queda bajo la card).
+    blit(outer.left + corner, outer.top + corner, w - 2 * corner, h - 2 * corner,
+         corner, corner, mid, mid);
+}
+
+// Direct2D: capas de rectángulos redondeados cuyo alfa se calcula para que el
+// resultado acumulado reproduzca el perfil gaussiano. El interior de la card se
+// excluye con una máscara geométrica, porque la superficie de la card es
+// translúcida y la sombra no debe verse a través de ella.
+static void PaintCardShadowD2D(const RECT& cardRect, float radius, float strength)
+{
+    if (!g_d2dRenderTarget || !g_d2dBrush || !g_d2dFactory || strength <= 0.0f)
+        return;
+
+    const float sigma = ShadowSigmaPx();
+    const float offsetY = ShadowOffsetPx();
+    const int kLayers = 12;
+    const float spreadMin = -0.6f * sigma;
+    const float spreadMax = 2.6f * sigma;
+    const float step = (spreadMax - spreadMin) / static_cast<float>(kLayers - 1);
+
+    float alphas[kLayers];
+    for (int k = 0; k < kLayers; ++k)
+    {
+        const float here = ShadowProfile(spreadMin + step * k, sigma, strength);
+        const float outer = (k + 1 < kLayers)
+            ? ShadowProfile(spreadMin + step * (k + 1), sigma, strength) : 0.0f;
+        alphas[k] = std::max(0.0f, 1.0f - (1.0f - here) / (1.0f - outer));
+    }
+
+    const float left = static_cast<float>(cardRect.left);
+    const float top = static_cast<float>(cardRect.top);
+    const float right = static_cast<float>(cardRect.right);
+    const float bottom = static_cast<float>(cardRect.bottom);
+
+    ID2D1RectangleGeometry* outerGeometry = nullptr;
+    ID2D1RoundedRectangleGeometry* cardGeometry = nullptr;
+    ID2D1GeometryGroup* maskGroup = nullptr;
+    ID2D1Layer* layer = nullptr;
+    const float reach = spreadMax + offsetY + 2.0f;
+    if (SUCCEEDED(g_d2dFactory->CreateRectangleGeometry(
+            D2D1::RectF(left - reach, top - reach, right + reach, bottom + reach),
+            &outerGeometry)) && outerGeometry &&
+        SUCCEEDED(g_d2dFactory->CreateRoundedRectangleGeometry(
+            D2D1::RoundedRect(D2D1::RectF(left + 0.5f, top + 0.5f,
+                                          right - 0.5f, bottom - 0.5f),
+                              radius, radius), &cardGeometry)) && cardGeometry)
+    {
+        ID2D1Geometry* geometries[2] = { outerGeometry, cardGeometry };
+        if (SUCCEEDED(g_d2dFactory->CreateGeometryGroup(
+                D2D1_FILL_MODE_ALTERNATE, geometries, 2, &maskGroup)) && maskGroup &&
+            SUCCEEDED(g_d2dRenderTarget->CreateLayer(nullptr, &layer)) && layer)
+        {
+            D2D1_LAYER_PARAMETERS parameters = D2D1::LayerParameters(
+                D2D1::InfiniteRect(), maskGroup,
+                D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::Matrix3x2F::Identity(),
+                1.0f, nullptr, D2D1_LAYER_OPTIONS_NONE);
+            g_d2dRenderTarget->PushLayer(&parameters, layer);
+        }
+        else
+        {
+            if (maskGroup) { maskGroup->Release(); maskGroup = nullptr; }
+            if (layer) { layer->Release(); layer = nullptr; }
+        }
+    }
+
+    // De fuera hacia dentro: cada capa se compone "over" con el alfa calculado.
+    for (int k = kLayers - 1; k >= 0; --k)
+    {
+        if (alphas[k] < 0.002f)
+            continue;
+        const float spread = spreadMin + step * k;
+        const float rr = std::max(0.0f, radius + spread);
+        g_d2dBrush->SetColor(D2D1::ColorF(0.0f, 0.0f, 0.0f, alphas[k]));
+        D2D1_ROUNDED_RECT shape = D2D1::RoundedRect(
+            D2D1::RectF(left - spread, top + offsetY - spread,
+                        right + spread, bottom + offsetY + spread), rr, rr);
+        g_d2dRenderTarget->FillRoundedRectangle(&shape, g_d2dBrush);
+    }
+
+    if (layer)
+        g_d2dRenderTarget->PopLayer();
+    if (layer) layer->Release();
+    if (maskGroup) maskGroup->Release();
+    if (cardGeometry) cardGeometry->Release();
+    if (outerGeometry) outerGeometry->Release();
 }
 
 static void UnregisterThumbnailSlot(int slot)
@@ -3471,7 +4487,8 @@ static void UpdateThumbnailProperties(int slot, const RECT& area, HWND source)
     RECT destination = g_selectionExpansionActive
         ? area : ContainedRect(area, sourceWidth, sourceHeight);
     RECT viewport = { 0, 0, g_runtimeSelectorWidth, g_runtimeSelectorHeight };
-    if (g_selectionExpansionActive && g_selector && IsWindow(g_selector))
+    if ((g_selectionExpansionActive || IsFullscreenBackdropActive()) &&
+        g_selector && IsWindow(g_selector))
         GetClientRect(g_selector, &viewport);
     RECT clipped = {
         std::max(destination.left, viewport.left),
@@ -3564,6 +4581,20 @@ static void UpdateThumbnailSlots()
             {
                 g_thumbnailSlots[slot].thumbnail = thumbnail;
                 g_thumbnailSlots[slot].source = source;
+                // Use the dimensions DWM actually exposes for its thumbnail,
+                // rather than GetClientRect/GetWindowRect which can differ by
+                // invisible resize borders and cause a few pixels of offset.
+                if (g_dwmQueryThumbnailSourceSize)
+                {
+                    SIZE thumbnailSize = {};
+                    if (SUCCEEDED(g_dwmQueryThumbnailSourceSize(
+                            thumbnail, &thumbnailSize)) &&
+                        thumbnailSize.cx > 0 && thumbnailSize.cy > 0)
+                    {
+                        g_thumbnailSlots[slot].sourceWidth = thumbnailSize.cx;
+                        g_thumbnailSlots[slot].sourceHeight = thumbnailSize.cy;
+                    }
+                }
             }
         }
 
@@ -3632,6 +4663,7 @@ static void ApplyScenePresence(float presence)
         // es la transición inversa (el mismo mapeo recorrido al revés).
         presence = Clamp01(presence);
         g_scenePresence = presence;
+        UpdateFullscreenBackdrop();
         const float c = 1.0f - presence;
         const float vertical = std::min(1.0f, c / 0.72f);
         const float horizontal = std::max(0.0f, (c - 0.72f) / 0.28f);
@@ -3646,25 +4678,29 @@ static void ApplyScenePresence(float presence)
     // que "presence" supere 1.0 un instante (overshoot), de modo que escala,
     // opacidad y apertura del carrusel siguen un único progreso.
     const bool bouncy = g_animationStyle == AnimationStyle::Bouncy;
-    presence = bouncy ? std::max(0.0f, presence) : Clamp01(presence);
+    const bool cinematic = g_animationStyle == AnimationStyle::Cinematic;
+    presence = (bouncy || cinematic) ? std::max(0.0f, presence) : Clamp01(presence);
     g_scenePresence = presence;
-    const float startScale = bouncy ? 0.88f : 0.92f;
+    UpdateFullscreenBackdrop();
+    const float startScale = bouncy ? 0.88f : (cinematic ? 0.86f : 0.92f);
     const float scale = startScale + (1.0f - startScale) * presence;
     g_sceneScaleX = scale;
     g_sceneScaleY = scale;
-    g_sceneOpacity = EaseSmooth(std::min(1.0f, presence) / 0.45f);
-    g_carouselSpread = 0.96f + 0.04f * presence;
+    g_sceneOpacity = cinematic
+        ? EaseSmooth(std::min(1.0f, presence) / 0.38f)
+        : EaseSmooth(std::min(1.0f, presence) / 0.45f);
+    g_carouselSpread = cinematic
+        ? 0.93f + 0.07f * presence
+        : 0.96f + 0.04f * presence;
 }
 
-// Resorte subamortiguado normalizado (0 -> 1) para la apertura Bouncy:
-// zeta 0.5, omega 32 rad/s, velocidad inicial 12/s sobre 0.30 s de tiempo de
-// resorte. Overshoot de ~18 %, un único retroceso de ~3 % y asentamiento
-// dentro del 0.3 % al final; en t=1 se fuerza exactamente 1.0.
-static float SpringOvershoot(float t)
+// Resorte subamortiguado existente para Bouncy: se conserva su modelo físico
+// (respuesta de segundo orden), con amortiguación ligeramente menor y mayor
+// velocidad inicial. La normalización al valor en t=1 evita un salto de valor
+// al terminar; el overshoot de la presencia queda alrededor del 20 %.
+static float SpringResponseRaw(float t)
 {
-    if (t >= 1.0f)
-        return 1.0f;
-    const float zeta = 0.5f, omega = 32.0f, v0 = 12.0f, span = 0.30f;
+    const float zeta = 0.48f, omega = 32.0f, v0 = 14.0f, span = 0.30f;
     const float wd = omega * sqrtf(1.0f - zeta * zeta);
     const float tau = std::max(0.0f, t) * span;
     const float e = expf(-zeta * omega * tau) *
@@ -3672,19 +4708,55 @@ static float SpringOvershoot(float t)
     return 1.0f - e;
 }
 
+static float SpringOvershoot(float t)
+{
+    if (t <= 0.0f)
+        return 0.0f;
+    if (t >= 1.0f)
+        return 1.0f;
+    const float endpoint = SpringResponseRaw(1.0f);
+    return endpoint > 0.0f ? SpringResponseRaw(t) / endpoint : t;
+}
+
 static float OpenDurationMs()
 {
+    // Fullscreen's backdrop reveal is intentionally much snappier than the
+    // regular selector. Keep Bouncy's existing timing as requested.
+    if (g_baseBackgroundMode == BaseBackgroundMode::Fullscreen)
+    {
+        switch (g_animationStyle)
+        {
+        case AnimationStyle::Bouncy: return 380.0f;
+        case AnimationStyle::Rct: return 120.0f;
+        case AnimationStyle::Cinematic: return 180.0f;
+        default: return 120.0f;
+        }
+    }
+
     switch (g_animationStyle)
     {
-    case AnimationStyle::Bouncy: return 290.0f;  // Linear 200 ms + 90 ms
+    case AnimationStyle::Bouncy: return 380.0f;
     case AnimationStyle::Rct: return 320.0f;
+    case AnimationStyle::Cinematic: return 260.0f;
     default: return 200.0f;
     }
 }
 
 static float CloseDurationMs()
 {
-    return g_animationStyle == AnimationStyle::Rct ? 320.0f : 150.0f;
+    if (g_baseBackgroundMode == BaseBackgroundMode::Fullscreen)
+    {
+        switch (g_animationStyle)
+        {
+        case AnimationStyle::Bouncy: return 150.0f;
+        case AnimationStyle::Rct: return 120.0f;
+        case AnimationStyle::Cinematic: return 180.0f;
+        default: return 120.0f;
+        }
+    }
+    if (g_animationStyle == AnimationStyle::Rct) return 320.0f;
+    if (g_animationStyle == AnimationStyle::Cinematic) return 220.0f;
+    return 150.0f;
 }
 
 static float OpenPresenceAt(float t)
@@ -3693,16 +4765,21 @@ static float OpenPresenceAt(float t)
     {
     case AnimationStyle::Bouncy: return SpringOvershoot(t);
     case AnimationStyle::Rct: return t;
-    default: return EaseOutExp(t, 5.0f);
+    case AnimationStyle::Cinematic: return EaseOutBack(t, 1.15f);
+    default: return EaseOutCubic(t);
     }
 }
 
 // Fracción de presencia que queda al cerrar (1 -> 0).
 static float CloseRemainingAt(float t)
 {
-    return g_animationStyle == AnimationStyle::Rct
-        ? 1.0f - t
-        : 1.0f - EaseOutCubic(t);
+    if (g_animationStyle == AnimationStyle::Rct)
+        return 1.0f - t;
+    if (g_animationStyle == AnimationStyle::Linear)
+        return 1.0f - EaseInCubic(t);
+    if (g_animationStyle == AnimationStyle::Cinematic)
+        return 1.0f - EaseInCubic(t);
+    return 1.0f - EaseOutCubic(t);
 }
 
 static float GetCardExitProgress()
@@ -3743,44 +4820,15 @@ static RECT LerpRect(const RECT& a, const RECT& b, float t)
     return result;
 }
 
-// 100 ms for a target close to the preview and up to 300 ms for a large/far
-// target. Size and center travel are normalized to the work area; fullscreen
-// naturally reaches the maximum because it changes both preview dimensions.
+// Duración base fija de la expansión hasta llenar la pantalla: 120 ms.
+// AnimationDuration conserva el ajuste global de velocidad del usuario.
 static float CalculateSelectionExpansionDurationMs(
     const RECT& source, const RECT& destination, const RECT& work)
 {
-    const float workWidth = static_cast<float>(work.right - work.left);
-    const float workHeight = static_cast<float>(work.bottom - work.top);
-    if (workWidth <= 0.0f || workHeight <= 0.0f)
-        return 300.0f;
-
-    const float sourceWidth = static_cast<float>(source.right - source.left);
-    const float sourceHeight = static_cast<float>(source.bottom - source.top);
-    const float destinationWidth = static_cast<float>(destination.right - destination.left);
-    const float destinationHeight = static_cast<float>(destination.bottom - destination.top);
-    const float sourceCenterX = (source.left + source.right) * 0.5f;
-    const float sourceCenterY = (source.top + source.bottom) * 0.5f;
-    const float destinationCenterX = (destination.left + destination.right) * 0.5f;
-    const float destinationCenterY = (destination.top + destination.bottom) * 0.5f;
-
-    const float maxWidthChange = std::max(1.0f, std::max(sourceWidth, workWidth - sourceWidth));
-    const float maxHeightChange = std::max(1.0f, std::max(sourceHeight, workHeight - sourceHeight));
-    const float widthChange = std::min(1.0f,
-        fabsf(destinationWidth - sourceWidth) / maxWidthChange);
-    const float heightChange = std::min(1.0f,
-        fabsf(destinationHeight - sourceHeight) / maxHeightChange);
-    const float sizeDistance = sqrtf((widthChange * widthChange +
-                                      heightChange * heightChange) * 0.5f);
-
-    const float maxCenterDistance = std::max(1.0f,
-        sqrtf(workWidth * workWidth + workHeight * workHeight) * 0.5f);
-    const float centerDx = destinationCenterX - sourceCenterX;
-    const float centerDy = destinationCenterY - sourceCenterY;
-    const float positionDistance = std::min(1.0f,
-        sqrtf(centerDx * centerDx + centerDy * centerDy) / maxCenterDistance);
-
-    const float distance = std::max(sizeDistance, positionDistance);
-    return 100.0f + 200.0f * std::max(0.0f, std::min(1.0f, distance));
+    (void)source;
+    (void)destination;
+    (void)work;
+    return 120.0f;
 }
 
 static void StartSelectionExpansion(HWND target, bool targetWasMinimized)
@@ -3946,6 +4994,8 @@ static void StartSelectionExpansion(HWND target, bool targetWasMinimized)
     }
     g_selectionExpansionActive = true;
     g_selectionExpansionFinishPending = false;
+    g_selectionActivationRequested = false;
+    g_selectionActivationRequestTick = 0;
     g_selectionExpansionTarget = target;
     g_selectionExpansionWorkRect = work;
     g_selectionExpansionSceneOffset = POINT{
@@ -3969,6 +5019,14 @@ static void StartSelectionExpansion(HWND target, bool targetWasMinimized)
     KillTimer(g_selector, kTabRepeatTimerId);
     // Pattern Waves and the cursor spotlight belong to the task-switcher
     // backdrop, which is removed for the selected-window expansion.
+    const bool wasFullscreenBackdrop = IsFullscreenBackdropActive();
+    HideFullscreenBackdrop(true);
+    if (wasFullscreenBackdrop)
+    {
+        // Blur mode disabled DWM glass on the selector itself. Restore it before
+        // clearing the expanded HWND so the selected thumbnail reveals desktop.
+        ApplySelectorVisuals(g_selector);
+    }
     KillTimer(g_selector, kPatternTimerId);
     g_backgroundSpotlightActive = false;
     UiSetInteractive(false);
@@ -4016,7 +5074,7 @@ static void UpdateSelectionExpansion()
     if (!g_selectionExpansionFinishPending)
     {
         const float raw = ElapsedFraction(g_selectionExpansionStart,
-                                           AnimationDuration(g_selectionExpansionDurationMs));
+                                           g_selectionExpansionDurationMs);
         // Misma estrategia de desplazamiento agresivo usada por el renderer:
         // respuesta inmediata, avance fuerte al inicio y llegada exacta al
         // destino sin overshoot ni rebote adicional.
@@ -4031,7 +5089,36 @@ static void UpdateSelectionExpansion()
     else
     {
         HWND target = g_selectionExpansionTarget;
+        if (!g_selectionActivationRequested)
+        {
+            // Pide activar la ventana mientras el selector sigue cubriendo la
+            // pantalla. La expansión final permanece dibujada durante la espera.
+            g_selectionActivationRequested = true;
+            g_selectionActivationRequestTick = GetTickCount64();
+            ActivateWindow(target);
+        }
+
+        const ULONGLONG activationWaitMs =
+            GetTickCount64() - g_selectionActivationRequestTick;
+        const bool targetReady = target && IsWindow(target) &&
+            !IsIconic(target) && GetForegroundWindow() == target;
+        // Deja al menos un ciclo de composición para que DWM actualice la
+        // ventana destino detrás de la cubierta antes de retirarla.
+        const bool targetFrameSettled = targetReady && activationWaitMs >= 20;
+        const bool activationTimedOut =
+            activationWaitMs >= kSelectionActivationWaitMaxMs;
+        if (!targetFrameSettled && !activationTimedOut)
+        {
+            UpdateSelectorSurfaceTransform();
+            UpdateSelectorControls();
+            return;
+        }
+
+        // El destino ya está foreground (o agotó el tiempo máximo de espera):
+        // retirar ahora la cubierta expandida evita enseñar un hueco intermedio.
         g_selectionExpansionActive = false;
+        g_selectionActivationRequested = false;
+        g_selectionActivationRequestTick = 0;
         InterlockedExchange(&g_selectionTransitionActive, 0);
         g_selectionExpansionTarget = nullptr;
         g_pendingActivationTarget = nullptr;
@@ -4041,7 +5128,6 @@ static void UpdateSelectionExpansion()
         g_state = SelectorState::Idle;
         g_cleanupInProgress = false;
         CleanupKeyboardState();
-        ActivateWindow(target);
         return;
     }
     UpdateSelectorSurfaceTransform();
@@ -4116,7 +5202,7 @@ static void UpdateSelectorMotion()
         // superficie permanece fija.
         ApplyScenePresence(1.0f);
         if (ElapsedFraction(g_selectorAnimationStart,
-                            AnimationDuration(kNavigationDuration)) >= 1.0f)
+                            CardNavigationDuration()) >= 1.0f)
             g_selectorAnimation = SelectorAnimationState::Open;
     }
     else if (g_selectorAnimation == SelectorAnimationState::Closing)
@@ -4247,6 +5333,33 @@ static double NextSampleTimeMs(double now, double* wakeMs)
     return now;
 }
 
+// Con el fondo fullscreen quieto (presencia estable, sin expansión de
+// selección), un frame solo cambia la zona de las cards y sus sombras: se
+// invalida únicamente esa zona en vez del monitor completo.
+static void InvalidateSelectorForFrame()
+{
+    if (IsFullscreenBackdropActive() && g_fsSharpD2D && g_fsBlurD2D &&
+        !g_selectionExpansionActive &&
+        g_scenePresence >= 1.0f && g_scenePresence <= 1.0001f)
+    {
+        RECT client = {};
+        GetClientRect(g_selector, &client);
+        const int m = ScaleLayoutPx(64.0f);
+        RECT dirty = {
+            g_selectorSceneOffset.x - m,
+            g_selectorSceneOffset.y - m,
+            g_selectorSceneOffset.x + g_runtimeSelectorWidth + m,
+            g_selectorSceneOffset.y + g_runtimeSelectorHeight + m
+        };
+        if (IntersectRect(&dirty, &dirty, &client))
+        {
+            InvalidateRect(g_selector, &dirty, FALSE);
+            return;
+        }
+    }
+    InvalidateRect(g_selector, nullptr, FALSE);
+}
+
 static void ArmFramePump()
 {
     if (g_framePumpArmed || !g_selector)
@@ -4332,7 +5445,7 @@ static void RunFrame()
         // Thumbnails DWM y superficie D2D se actualizan juntos, con el mismo
         // estado de escena, dentro del mismo frame.
         UpdateThumbnailSlots();
-        InvalidateRect(g_selector, nullptr, FALSE);
+        InvalidateSelectorForFrame();
         UpdateWindow(g_selector);
     }
 
@@ -4344,18 +5457,18 @@ static void EnsureIconBitmap(int groupIndex)
 {
     if (groupIndex < 0 || groupIndex >= static_cast<int>(g_groups.size()))
         return;
-    if (!g_d2dDCRenderTarget)
+    if (!g_d2dRenderTarget)
         return;
     if (g_groups[groupIndex].icon && !g_groups[groupIndex].iconBitmap)
         g_groups[groupIndex].iconBitmap = CreateD2DBitmapFromHIcon(
-            g_d2dDCRenderTarget, g_groups[groupIndex].icon);
+            g_d2dRenderTarget, g_groups[groupIndex].icon);
 }
 
 static ID2D1LinearGradientBrush* EnsureSurfaceGradientBrush(int groupIndex,
                                                             bool selected)
 {
     if (groupIndex < 0 || groupIndex >= static_cast<int>(g_groups.size()) ||
-        !g_d2dDCRenderTarget)
+        !g_d2dRenderTarget)
         return nullptr;
 
     AppGroup& group = g_groups[groupIndex];
@@ -4391,7 +5504,7 @@ static ID2D1LinearGradientBrush* EnsureSurfaceGradientBrush(int groupIndex,
     stops[4].color = edge;
 
     ID2D1GradientStopCollection* stopCollection = nullptr;
-    HRESULT hr = g_d2dDCRenderTarget->CreateGradientStopCollection(
+    HRESULT hr = g_d2dRenderTarget->CreateGradientStopCollection(
         stops, 5, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &stopCollection);
     if (FAILED(hr) || !stopCollection)
         return nullptr;
@@ -4399,7 +5512,7 @@ static ID2D1LinearGradientBrush* EnsureSurfaceGradientBrush(int groupIndex,
     D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES properties = {};
     properties.startPoint = D2D1::Point2F(0.0f, 0.5f);
     properties.endPoint = D2D1::Point2F(1.0f, 0.5f);
-    hr = g_d2dDCRenderTarget->CreateLinearGradientBrush(
+    hr = g_d2dRenderTarget->CreateLinearGradientBrush(
         properties, stopCollection, &brush);
     stopCollection->Release();
     return SUCCEEDED(hr) ? brush : nullptr;
@@ -4407,7 +5520,7 @@ static ID2D1LinearGradientBrush* EnsureSurfaceGradientBrush(int groupIndex,
 
 static ID2D1RadialGradientBrush* EnsureCloseAccentBrush()
 {
-    if (g_closeAccentBrush || !g_d2dDCRenderTarget)
+    if (g_closeAccentBrush || !g_d2dRenderTarget)
         return g_closeAccentBrush;
 
     D2D1_GRADIENT_STOP stops[3] = {};
@@ -4419,7 +5532,7 @@ static ID2D1RadialGradientBrush* EnsureCloseAccentBrush()
     stops[2].color = D2D1::ColorF(0.18f, 0.015f, 0.020f, 0.0f);
 
     ID2D1GradientStopCollection* stopCollection = nullptr;
-    HRESULT hr = g_d2dDCRenderTarget->CreateGradientStopCollection(
+    HRESULT hr = g_d2dRenderTarget->CreateGradientStopCollection(
         stops, 3, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &stopCollection);
     if (FAILED(hr) || !stopCollection)
         return nullptr;
@@ -4429,7 +5542,7 @@ static ID2D1RadialGradientBrush* EnsureCloseAccentBrush()
     properties.gradientOriginOffset = D2D1::Point2F(0.0f, 0.0f);
     properties.radiusX = 1.0f;
     properties.radiusY = 1.0f;
-    hr = g_d2dDCRenderTarget->CreateRadialGradientBrush(
+    hr = g_d2dRenderTarget->CreateRadialGradientBrush(
         properties, stopCollection, &g_closeAccentBrush);
     stopCollection->Release();
     return SUCCEEDED(hr) ? g_closeAccentBrush : nullptr;
@@ -4467,7 +5580,7 @@ static void PaintSlotHeaderD2D(int slot, int groupIndex, bool selected, float di
             static_cast<float>(iconRect.top),
             static_cast<float>(iconRect.right),
             static_cast<float>(iconRect.bottom));
-        g_d2dDCRenderTarget->DrawBitmap(
+        g_d2dRenderTarget->DrawBitmap(
             group.iconBitmap, &iconDest, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
     }
 
@@ -4481,7 +5594,7 @@ static void PaintSlotHeaderD2D(int slot, int groupIndex, bool selected, float di
             ? D2D1::ColorF(0.965f, 0.968f, 0.98f, 1.0f)
             : D2D1::ColorF(0.815f, 0.823f, 0.855f, 1.0f);
         g_d2dBrush->SetColor(textColor);
-        g_d2dDCRenderTarget->DrawText(text.c_str(), static_cast<UINT32>(text.length()),
+        g_d2dRenderTarget->DrawText(text.c_str(), static_cast<UINT32>(text.length()),
                                       format, &textRectD2D, g_d2dBrush);
     }
 }
@@ -4500,7 +5613,7 @@ static void PaintCounterD2D()
             static_cast<float>(rc.left), static_cast<float>(rc.top),
             static_cast<float>(rc.right), static_cast<float>(rc.bottom));
         g_d2dBrush->SetColor(D2D1::ColorF(0.73f, 0.74f, 0.77f, 1.0f));
-        g_d2dDCRenderTarget->DrawText(text.c_str(), static_cast<UINT32>(text.length()),
+        g_d2dRenderTarget->DrawText(text.c_str(), static_cast<UINT32>(text.length()),
                                       g_dwriteCounterFormat, &textRectD2D, g_d2dBrush);
     }
 }
@@ -4564,7 +5677,7 @@ static void PaintCounterGDI(HDC hdc)
 
 static void PaintCenterAccentMarginD2D(const RECT& cardRect, int groupIndex, float radius)
 {
-    if (!g_d2dDCRenderTarget || !g_d2dBrush || groupIndex < 0 ||
+    if (!g_d2dRenderTarget || !g_d2dBrush || groupIndex < 0 ||
         groupIndex >= static_cast<int>(g_groups.size()))
         return;
 
@@ -4587,7 +5700,7 @@ static void PaintCenterAccentMarginD2D(const RECT& cardRect, int groupIndex, flo
     // exactamente el contorno redondeado de la card central y toma el color
     // dominante extraído de su contenido.
     g_d2dBrush->SetColor(D2D1::ColorF(r, g, b, 0.34f));
-    g_d2dDCRenderTarget->DrawRoundedRectangle(&outer, g_d2dBrush,
+    g_d2dRenderTarget->DrawRoundedRectangle(&outer, g_d2dBrush,
                                                static_cast<float>(ScaleLayoutPx(2.0f)));
 
     D2D1_ROUNDED_RECT inner = D2D1::RoundedRect(
@@ -4597,7 +5710,7 @@ static void PaintCenterAccentMarginD2D(const RECT& cardRect, int groupIndex, flo
                     static_cast<float>(cardRect.bottom) + ScaleLayoutPx(2.0f)),
         radius + ScaleLayoutPx(2.0f), radius + ScaleLayoutPx(2.0f));
     g_d2dBrush->SetColor(D2D1::ColorF(r, g, b, 0.18f));
-    g_d2dDCRenderTarget->DrawRoundedRectangle(&inner, g_d2dBrush,
+    g_d2dRenderTarget->DrawRoundedRectangle(&inner, g_d2dBrush,
                                                static_cast<float>(ScaleLayoutPx(1.0f)));
 }
 
@@ -4766,20 +5879,32 @@ static float PatternDotVariation(float pixelX, float pixelY, float spacing)
     return static_cast<float>(hash & 0xffffu) / 65535.0f;
 }
 
+static int PatternFieldRenderWidth()
+{
+    return g_patternFieldRenderWidth > 0 ? g_patternFieldRenderWidth : g_runtimeSelectorWidth;
+}
+
+static int PatternFieldRenderHeight()
+{
+    return g_patternFieldRenderHeight > 0 ? g_patternFieldRenderHeight : g_runtimeSelectorHeight;
+}
+
 static float PatternBaseHeight(float pixelX, float pixelY, float time)
 {
-    if (g_runtimeSelectorWidth <= 0 || g_runtimeSelectorHeight <= 0)
+    const int renderWidth = PatternFieldRenderWidth();
+    const int renderHeight = PatternFieldRenderHeight();
+    if (renderWidth <= 0 || renderHeight <= 0)
         return 0.0f;
     // X is dominant, producing vertical crests. Y and time bend them organically.
-    float nx = pixelX / static_cast<float>(g_runtimeSelectorWidth);
-    float ny = pixelY / static_cast<float>(g_runtimeSelectorHeight);
-    // Moderately faster phase motion keeps the vertical crests visibly moving
-    // without turning the pattern into noisy flicker.
+    float nx = pixelX / static_cast<float>(renderWidth);
+    float ny = pixelY / static_cast<float>(renderHeight);
+    // Reduce all procedural phase motion by 60% while preserving the Speed control.
+    const float phaseTime = time * 0.40f;
     const float speed = 0.55f + g_patternSpeed * 1.35f;
-    float organic = 0.20f * sinf(ny * 7.0f + time * 0.31f +
-                                  sinf(nx * 4.0f + time * 0.17f));
-    float ridges = sinf(nx * 13.5f + time * speed + organic);
-    float fine = 0.28f * sinf(nx * 27.0f - time * speed * 0.55f + ny * 2.5f);
+    float organic = 0.20f * sinf(ny * 7.0f + phaseTime * 0.31f +
+                                  sinf(nx * 4.0f + phaseTime * 0.17f));
+    float ridges = sinf(nx * 13.5f + phaseTime * speed + organic);
+    float fine = 0.28f * sinf(nx * 27.0f - phaseTime * speed * 0.55f + ny * 2.5f);
     float height = (ridges + fine) / 1.28f;
     // Slightly larger field amplitude gives the influence more spatial body;
     // visual brightness remains controlled in the dot stage below.
@@ -4789,8 +5914,8 @@ static float PatternBaseHeight(float pixelX, float pixelY, float time)
 static void UpdatePatternRenderCache(float time)
 {
     const float rippleScale = 0.72f + g_patternWaveStrength * 0.38f;
-    const float width = static_cast<float>(std::max(1, g_runtimeSelectorWidth));
-    const float height = static_cast<float>(std::max(1, g_runtimeSelectorHeight));
+    const float width = static_cast<float>(std::max(1, PatternFieldRenderWidth()));
+    const float height = static_cast<float>(std::max(1, PatternFieldRenderHeight()));
     for (int y = 0; y < kPatternFieldHeight; ++y)
     {
         float pixelY = static_cast<float>(y) * height /
@@ -4809,12 +5934,14 @@ static void UpdatePatternRenderCache(float time)
 
 static float PatternFieldSample(float pixelX, float pixelY)
 {
-    if (g_runtimeSelectorWidth <= 0 || g_runtimeSelectorHeight <= 0)
+    const int renderWidth = PatternFieldRenderWidth();
+    const int renderHeight = PatternFieldRenderHeight();
+    if (renderWidth <= 0 || renderHeight <= 0)
         return 0.0f;
     float fx = WrapPatternCoordinate(pixelX,
-        static_cast<float>(g_runtimeSelectorWidth), kPatternFieldWidth);
+        static_cast<float>(renderWidth), kPatternFieldWidth);
     float fy = WrapPatternCoordinate(pixelY,
-        static_cast<float>(g_runtimeSelectorHeight), kPatternFieldHeight);
+        static_cast<float>(renderHeight), kPatternFieldHeight);
     int x0 = static_cast<int>(floorf(fx));
     int y0 = static_cast<int>(floorf(fy));
     float tx = fx - x0;
@@ -4832,13 +5959,17 @@ static float PatternFieldSample(float pixelX, float pixelY)
 
 static void DrawPatternWaves(const RECT& clientRect)
 {
-    if (!IsPatternWavesActive() || !g_d2dDCRenderTarget || !g_d2dBrush)
+    if (!IsPatternWavesActive() || !g_d2dRenderTarget || !g_d2dBrush)
         return;
     const int width = clientRect.right - clientRect.left;
     const int height = clientRect.bottom - clientRect.top;
     if (width <= 0 || height <= 0)
         return;
 
+    const int previousFieldWidth = g_patternFieldRenderWidth;
+    const int previousFieldHeight = g_patternFieldRenderHeight;
+    g_patternFieldRenderWidth = width;
+    g_patternFieldRenderHeight = height;
     const double drawStartMs = QpcNowMs();
     UpdatePatternRenderCache(static_cast<float>(drawStartMs / 1000.0));
     // La calidad adaptativa controla la cadencia, no la geometría del patrón.
@@ -4860,7 +5991,7 @@ static void DrawPatternWaves(const RECT& clientRect)
                                           static_cast<float>(height));
     g_d2dBrush->SetColor(D2D1::ColorF(0.025f, 0.035f, 0.055f,
                                       0.08f * effectOpacity));
-    g_d2dDCRenderTarget->FillRectangle(&background, g_d2dBrush);
+    g_d2dRenderTarget->FillRectangle(&background, g_d2dBrush);
 
     // The caller already applies the scene transform used by the cards and
     // DWM background. Pattern Waves is deliberately rendered in that same
@@ -4976,6 +6107,8 @@ static void DrawPatternWaves(const RECT& clientRect)
     }
     if (qualityChanged && g_selector && IsWindow(g_selector))
         SetTimer(g_selector, kPatternTimerId, GetPatternTimerInterval(), nullptr);
+    g_patternFieldRenderWidth = previousFieldWidth;
+    g_patternFieldRenderHeight = previousFieldHeight;
 }
 static bool IsPointInsideRoundedRect(const D2D1_ROUNDED_RECT& rect, float x, float y)
 {
@@ -5039,7 +6172,7 @@ static ID2D1RadialGradientBrush* EnsureAmbientShadowBrush()
 {
     if (g_ambientShadowBrush)
         return g_ambientShadowBrush;
-    if (!g_d2dDCRenderTarget)
+    if (!g_d2dRenderTarget)
         return nullptr;
 
     D2D1_GRADIENT_STOP stops[4] = {};
@@ -5049,7 +6182,7 @@ static ID2D1RadialGradientBrush* EnsureAmbientShadowBrush()
     stops[3].position = 1.00f; stops[3].color = D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f);
 
     ID2D1GradientStopCollection* collection = nullptr;
-    if (FAILED(g_d2dDCRenderTarget->CreateGradientStopCollection(
+    if (FAILED(g_d2dRenderTarget->CreateGradientStopCollection(
             stops, 4, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP, &collection)) ||
         !collection)
         return nullptr;
@@ -5059,7 +6192,7 @@ static ID2D1RadialGradientBrush* EnsureAmbientShadowBrush()
     props.gradientOriginOffset = D2D1::Point2F(0.0f, 0.0f);
     props.radiusX = 1.0f;
     props.radiusY = 1.0f;
-    HRESULT hr = g_d2dDCRenderTarget->CreateRadialGradientBrush(
+    HRESULT hr = g_d2dRenderTarget->CreateRadialGradientBrush(
         &props, nullptr, collection, &g_ambientShadowBrush);
     collection->Release();
     return SUCCEEDED(hr) ? g_ambientShadowBrush : nullptr;
@@ -5067,8 +6200,8 @@ static ID2D1RadialGradientBrush* EnsureAmbientShadowBrush()
 
 static ID2D1Layer* AcquireD2DLayer(ID2D1Layer*& slot)
 {
-    if (!slot && g_d2dDCRenderTarget)
-        g_d2dDCRenderTarget->CreateLayer(nullptr, &slot);
+    if (!slot && g_d2dRenderTarget)
+        g_d2dRenderTarget->CreateLayer(nullptr, &slot);
     return slot;
 }
 
@@ -5090,7 +6223,113 @@ static ID2D1RoundedRectangleGeometry* GetCachedCardMask(const D2D1_ROUNDED_RECT&
     return g_cardMaskGeometry;
 }
 
+static void PaintSelectorSceneImpl(HWND hwnd, HDC hdc);
+
+static void ReleaseD2DResourcesForTargetSwitch()
+{
+    // D2D bitmaps, brushes and layers belong to the render target that created
+    // them. Preserve HICON handles, but discard all target-bound caches.
+    for (auto& group : g_groups)
+    {
+        if (group.iconBitmap) { group.iconBitmap->Release(); group.iconBitmap = nullptr; }
+        if (group.surfaceBrushNormal) { group.surfaceBrushNormal->Release(); group.surfaceBrushNormal = nullptr; }
+        if (group.surfaceBrushSelected) { group.surfaceBrushSelected->Release(); group.surfaceBrushSelected = nullptr; }
+    }
+    ReleaseCachedD2DObjects();
+    ReleaseFullscreenD2DBitmaps();
+    if (g_closeAccentBrush) { g_closeAccentBrush->Release(); g_closeAccentBrush = nullptr; }
+    if (g_backgroundSpotlightBrush) { g_backgroundSpotlightBrush->Release(); g_backgroundSpotlightBrush = nullptr; }
+    if (g_ambientShadowBrush) { g_ambientShadowBrush->Release(); g_ambientShadowBrush = nullptr; }
+    g_backgroundSpotlightBrushColor = CLR_INVALID;
+    if (g_d2dBrush) { g_d2dBrush->Release(); g_d2dBrush = nullptr; }
+}
+
+static bool SetActiveD2DTarget(ID2D1RenderTarget* target)
+{
+    if (!target)
+        return false;
+    if (g_d2dRenderTarget != target)
+    {
+        ReleaseD2DResourcesForTargetSwitch();
+        g_d2dRenderTarget = target;
+    }
+    return true;
+}
+
+static bool EnsureFullscreenGpuTarget(HWND hwnd)
+{
+    if (!g_d2dFactory || !hwnd || !IsWindow(hwnd))
+        return false;
+    RECT rc = {};
+    if (!GetClientRect(hwnd, &rc))
+        return false;
+    const UINT width = static_cast<UINT>(std::max<LONG>(1, rc.right - rc.left));
+    const UINT height = static_cast<UINT>(std::max<LONG>(1, rc.bottom - rc.top));
+    if (!g_fsHwndRenderTarget)
+    {
+        const D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(
+            D2D1_RENDER_TARGET_TYPE_HARDWARE,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
+                              D2D1_ALPHA_MODE_IGNORE),
+            96.0f, 96.0f, D2D1_RENDER_TARGET_USAGE_NONE,
+            D2D1_FEATURE_LEVEL_DEFAULT);
+        const D2D1_HWND_RENDER_TARGET_PROPERTIES hwndProps =
+            D2D1::HwndRenderTargetProperties(hwnd, D2D1::SizeU(width, height));
+        const HRESULT hr = g_d2dFactory->CreateHwndRenderTarget(
+            props, hwndProps, &g_fsHwndRenderTarget);
+        if (FAILED(hr) || !g_fsHwndRenderTarget)
+        {
+            Wh_Log(L"[FS-GPU] No se pudo crear el target D2D por hardware: 0x%08X",
+                   static_cast<unsigned>(hr));
+            if (g_fsHwndRenderTarget) { g_fsHwndRenderTarget->Release(); g_fsHwndRenderTarget = nullptr; }
+            return false; // No fallback a GDI: Fullscreen debe ser acelerado por hardware.
+        }
+    }
+    else
+    {
+        const D2D1_SIZE_U current = g_fsHwndRenderTarget->GetPixelSize();
+        if (current.width != width || current.height != height)
+        {
+            const HRESULT hr = g_fsHwndRenderTarget->Resize(D2D1::SizeU(width, height));
+            if (FAILED(hr))
+            {
+                Wh_Log(L"[FS-GPU] Resize del target fallo: 0x%08X", static_cast<unsigned>(hr));
+                if (g_d2dRenderTarget == g_fsHwndRenderTarget)
+                    g_d2dRenderTarget = nullptr;
+                g_fsHwndRenderTarget->Release();
+                g_fsHwndRenderTarget = nullptr;
+                return false;
+            }
+        }
+    }
+    return SetActiveD2DTarget(g_fsHwndRenderTarget);
+}
+
+// En Fullscreen, Direct2D dibuja directamente en un HWND render target por GPU;
+// no se hace presentacion final por GDI/BitBlt.
 static void PaintSelectorScene(HWND hwnd, HDC hdc)
+{
+    if (IsFullscreenBackdropActive())
+    {
+        // Fullscreen is rendered directly to a hardware-only Direct2D HWND target.
+        // This route never binds a GDI HDC and never presents with BitBlt.
+        if (!LoadD2DAndDWrite() || !EnsureFullscreenGpuTarget(hwnd) ||
+            !LoadD2DAndDWrite() || !g_d2dRenderTarget || !g_d2dBrush ||
+            !EnsureFullscreenD2DBitmaps())
+        {
+            Wh_Log(L"[FS-GPU] Frame omitido: no hay un target de hardware listo.");
+            return;
+        }
+        PaintSelectorSceneImpl(hwnd, hdc);
+        return;
+    }
+
+    if (g_d2dDCRenderTarget)
+        SetActiveD2DTarget(g_d2dDCRenderTarget);
+    PaintSelectorSceneImpl(hwnd, hdc);
+}
+
+static void PaintSelectorSceneImpl(HWND hwnd, HDC hdc)
 {
     RECT clientRect = {};
     GetClientRect(hwnd, &clientRect);
@@ -5099,33 +6338,79 @@ static void PaintSelectorScene(HWND hwnd, HDC hdc)
     if (count <= 0)
         return;
 
-    bool d2dActive = LoadD2DAndDWrite() && g_d2dDCRenderTarget && g_d2dBrush &&
-                     SUCCEEDED(g_d2dDCRenderTarget->BindDC(hdc, &clientRect));
+    const bool fullscreenBackdrop = IsFullscreenBackdropActive();
+    const bool d2dLoaded = LoadD2DAndDWrite() && g_d2dRenderTarget && g_d2dBrush;
+
+    // Fullscreen con Direct2D: fondo y escena se dibujan juntos en un único
+    // BeginDraw/EndDraw sobre una superficie del tamaño del área sucia
+    // (rcPaint). El render target DC vuelca toda su superficie al EndDraw, así
+    // que el fondo no puede pintarse antes con GDI: debe ir dentro de D2D.
+    bool useSceneDc = false;
+    RECT dirty = clientRect;
+    if (fullscreenBackdrop && d2dLoaded && EnsureFullscreenD2DBitmaps())
+    {
+        // HWND render targets are redrawn as a complete frame. This avoids
+        // clearing untouched areas when D2D Clear() resets the whole target.
+        dirty = clientRect;
+        useSceneDc = false;
+    }
+    const D2D1::Matrix3x2F baseTransform = useSceneDc
+        ? D2D1::Matrix3x2F::Translation(-static_cast<float>(dirty.left),
+                                        -static_cast<float>(dirty.top))
+        : D2D1::Matrix3x2F::Identity();
+    RECT bindRect = clientRect;
+    HDC d2dDc = hdc;
+    if (useSceneDc)
+    {
+        bindRect = RECT{ 0, 0, dirty.right - dirty.left, dirty.bottom - dirty.top };
+        d2dDc = g_fsScene.dc;
+    }
+    auto presentScene = [&]() {
+        if (useSceneDc)
+            BitBlt(hdc, dirty.left, dirty.top, dirty.right - dirty.left,
+                   dirty.bottom - dirty.top, g_fsScene.dc, 0, 0, SRCCOPY);
+    };
+    const bool usingFullscreenGpu = fullscreenBackdrop &&
+        g_fsHwndRenderTarget && g_d2dRenderTarget == g_fsHwndRenderTarget;
+    bool d2dActive = d2dLoaded && (usingFullscreenGpu ||
+        (!fullscreenBackdrop && g_d2dDCRenderTarget &&
+         SUCCEEDED(g_d2dDCRenderTarget->BindDC(d2dDc, &bindRect))));
+
+    if (fullscreenBackdrop && !usingFullscreenGpu)
+        return;
 
     if (d2dActive)
     {
-        g_d2dDCRenderTarget->BeginDraw();
-        g_d2dDCRenderTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-        // Clear completamente para dejar que DWM glass sea visible
-        g_d2dDCRenderTarget->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+        g_d2dRenderTarget->BeginDraw();
+        g_d2dRenderTarget->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        g_d2dRenderTarget->SetTransform(baseTransform);
+        g_d2dRenderTarget->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f));
+        if (fullscreenBackdrop)
+            DrawFullscreenBackgroundD2D();
         if (g_selectionExpansionActive)
         {
             // The selected window is a DWM thumbnail composed independently
             // over this HWND. Clear the task-switcher UI immediately after
             // selection, while that thumbnail continues its expansion.
-            const HRESULT drawResult = g_d2dDCRenderTarget->EndDraw();
+            const HRESULT drawResult = g_d2dRenderTarget->EndDraw();
             if (drawResult == static_cast<HRESULT>(0x8899000C))
                 ReleaseD2DDeviceResources();
+            else if (SUCCEEDED(drawResult))
+                presentScene();
             return;
         }
         RECT sceneRect = { 0, 0, g_runtimeSelectorWidth, g_runtimeSelectorHeight };
         if (g_selectionExpansionActive)
             GetClientRect(hwnd, &sceneRect);
-        g_d2dDCRenderTarget->PushAxisAlignedClip(
-            D2D1::RectF(0.0f, 0.0f,
-                        static_cast<float>(sceneRect.right),
-                        static_cast<float>(sceneRect.bottom)),
-            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        D2D1_RECT_F sceneClip = fullscreenBackdrop
+            ? D2D1::RectF(0.0f, 0.0f,
+                          static_cast<float>(clientRect.right),
+                          static_cast<float>(clientRect.bottom))
+            : D2D1::RectF(0.0f, 0.0f,
+                          static_cast<float>(sceneRect.right),
+                          static_cast<float>(sceneRect.bottom));
+        g_d2dRenderTarget->PushAxisAlignedClip(
+            sceneClip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         float sceneScaleX = 1.0f;
         float sceneScaleY = 1.0f;
         GetSceneScale(sceneScaleX, sceneScaleY);
@@ -5139,16 +6424,16 @@ static void PaintSelectorScene(HWND hwnd, HDC hdc)
                 D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
                 D2D1::Matrix3x2F::Identity(), g_sceneOpacity, nullptr,
                 D2D1_LAYER_OPTIONS_NONE);
-            g_d2dDCRenderTarget->PushLayer(&opacityParameters, sceneOpacityLayer);
+            g_d2dRenderTarget->PushLayer(&opacityParameters, sceneOpacityLayer);
         }
 
         // El background y el contenedor forman parte de la misma escena que
         // las cards: deben acompañar la escala de apertura/cierre y compartir
         // su pivote central.
         if (sceneScaleX != 1.0f || sceneScaleY != 1.0f ||
-            g_selectionExpansionActive)
+            g_selectionExpansionActive || fullscreenBackdrop)
         {
-            g_d2dDCRenderTarget->SetTransform(GetSceneTransform());
+            g_d2dRenderTarget->SetTransform(GetSceneTransform() * baseTransform);
         }
 
         // Base background layer. None deliberately leaves the surface
@@ -5158,24 +6443,25 @@ static void PaintSelectorScene(HWND hwnd, HDC hdc)
             static_cast<float>(sceneRect.top),
             static_cast<float>(sceneRect.right),
             static_cast<float>(sceneRect.bottom));
-        if (g_baseBackgroundMode == BaseBackgroundMode::Dwm && g_dwmGlassEnabled)
+        if (!fullscreenBackdrop && g_baseBackgroundMode != BaseBackgroundMode::None &&
+            g_dwmGlassEnabled)
         {
             float r = GetRValue(g_dwmBackgroundColor) / 255.0f;
             float g = GetGValue(g_dwmBackgroundColor) / 255.0f;
             float b = GetBValue(g_dwmBackgroundColor) / 255.0f;
             g_d2dBrush->SetColor(D2D1::ColorF(r, g, b, g_dwmBackgroundOpacity));
-            g_d2dDCRenderTarget->FillRectangle(&bgRect, g_d2dBrush);
+            g_d2dRenderTarget->FillRectangle(&bgRect, g_d2dBrush);
         }
-        else if (g_baseBackgroundMode == BaseBackgroundMode::Dwm)
+        else if (!fullscreenBackdrop && g_baseBackgroundMode != BaseBackgroundMode::None)
         {
             // Fallback for DWM mode if glass is unavailable.
             g_d2dBrush->SetColor(D2D1::ColorF(0.70f, 0.74f, 0.82f, 0.18f));
-            g_d2dDCRenderTarget->FillRectangle(&bgRect, g_d2dBrush);
+            g_d2dRenderTarget->FillRectangle(&bgRect, g_d2dBrush);
         }
 
         // Cursor spotlight: only the background is affected. Cards are drawn
         // afterwards, so the spotlight never bleeds across their surfaces.
-        if (IsBackgroundSpotlightAllowed() &&
+        if (!fullscreenBackdrop && IsBackgroundSpotlightAllowed() &&
             g_dwmGlassEnabled && g_backgroundSpotlightActive)
         {
             ID2D1RadialGradientBrush* spotlight = EnsureBackgroundSpotlightBrush();
@@ -5195,12 +6481,12 @@ static void PaintSelectorScene(HWND hwnd, HDC hdc)
                 spotlight->SetGradientOriginOffset(D2D1::Point2F(0.0f, 0.0f));
                 spotlight->SetRadiusX(DpiPx(kSpotlightRadiusDip) / std::max(0.001f, sx));
                 spotlight->SetRadiusY(DpiPx(kSpotlightRadiusDip) / std::max(0.001f, sy));
-                g_d2dDCRenderTarget->FillRectangle(&bgRect, spotlight);
+                g_d2dRenderTarget->FillRectangle(&bgRect, spotlight);
             }
         }
 
         // Experimental background is an independent layer over the base.
-        if (IsPatternWavesActive())
+        if (!fullscreenBackdrop && IsPatternWavesActive())
         {
             // Pattern Waves is content inside the selector's existing DWM
             // container. The window region clips it; no second rounded mask
@@ -5210,7 +6496,7 @@ static void PaintSelectorScene(HWND hwnd, HDC hdc)
             DrawPatternWaves(sceneRect);
             if (sceneScaleX != 1.0f || sceneScaleY != 1.0f)
             {
-                g_d2dDCRenderTarget->SetTransform(GetSceneTransform());
+                g_d2dRenderTarget->SetTransform(GetSceneTransform() * baseTransform);
             }
         }
 
@@ -5218,7 +6504,7 @@ static void PaintSelectorScene(HWND hwnd, HDC hdc)
         // With no base and no experimental layer, omit it so cards float over
         // the desktop. Pattern Waves keeps its own mask and reactive border.
         const bool hasVisualBackground =
-            g_baseBackgroundMode != BaseBackgroundMode::None;
+            !fullscreenBackdrop && g_baseBackgroundMode != BaseBackgroundMode::None;
         if (hasVisualBackground)
         {
             // DWM owns the single rounded container. Pattern Waves does not
@@ -5230,7 +6516,7 @@ static void PaintSelectorScene(HWND hwnd, HDC hdc)
                 static_cast<float>(ScaleLayoutPx(27.0f)),
                 static_cast<float>(ScaleLayoutPx(27.0f)));
             g_d2dBrush->SetColor(D2D1::ColorF(0.32f, 0.36f, 0.43f, 0.30f));
-            g_d2dDCRenderTarget->DrawRoundedRectangle(&containerRect,
+            g_d2dRenderTarget->DrawRoundedRectangle(&containerRect,
                                                        g_d2dBrush, DpiPx(1.0f));
 
             RECT containerShadow = {
@@ -5244,14 +6530,36 @@ static void PaintSelectorScene(HWND hwnd, HDC hdc)
 
         // Sombra ambiental general: por encima del fondo (DWM/Pattern) y por
         // detrás de las cards. Se dibuja con ambos modos de fondo.
-        if (ID2D1RadialGradientBrush* ambient = EnsureAmbientShadowBrush())
+        if (!fullscreenBackdrop)
         {
-            const float w = static_cast<float>(sceneRect.right);
-            const float h = static_cast<float>(sceneRect.bottom);
-            ambient->SetCenter(D2D1::Point2F(w * 0.5f, h * 0.54f));
-            ambient->SetRadiusX(w * 0.55f);
-            ambient->SetRadiusY(h * 0.70f);
-            g_d2dDCRenderTarget->FillRectangle(D2D1::RectF(0.0f, 0.0f, w, h), ambient);
+            if (ID2D1RadialGradientBrush* ambient = EnsureAmbientShadowBrush())
+            {
+                const float w = static_cast<float>(sceneRect.right);
+                const float h = static_cast<float>(sceneRect.bottom);
+                ambient->SetCenter(D2D1::Point2F(w * 0.5f, h * 0.54f));
+                ambient->SetRadiusX(w * 0.55f);
+                ambient->SetRadiusY(h * 0.70f);
+                g_d2dRenderTarget->FillRectangle(
+                    D2D1::RectF(0.0f, 0.0f, w, h), ambient);
+            }
+        }
+
+    // Todas las sombras antes que las cards: la sombra de una card nunca queda
+    // por encima de otra card ya pintada.
+    for (int slot = 0; slot < GetCarouselSlotCount(); ++slot)
+        {
+            if (ResolveGroupIndex(slot) < 0)
+                continue;
+            const float shadowDist = fabsf(static_cast<float>(slot - GetCarouselCenterSlot()) + g_animOffset);
+            const bool shadowSelected = (shadowDist < 0.5f);
+            const RECT shadowCard = GetSlotCardRect(slot);
+            const float shadowRadius = shadowSelected
+                ? static_cast<float>(g_cardStyle.selectedCornerRadius) * g_uiScale.value
+                : static_cast<float>(g_cardStyle.cornerRadius) * g_uiScale.value;
+            float shadowStrength = shadowSelected ? 0.55f : 0.42f;
+            if (g_cardExitActive && slot == g_cardExitSlot)
+                shadowStrength *= GetCardExitOpacity();
+            PaintCardShadowD2D(shadowCard, shadowRadius, shadowStrength);
         }
 
     for (int slot = 0; slot < GetCarouselSlotCount(); ++slot)
@@ -5261,7 +6569,7 @@ static void PaintSelectorScene(HWND hwnd, HDC hdc)
                 continue;
 
             ID2D1Layer* cardExitLayer = nullptr;
-            if (g_cardExitActive && slot == g_cardExitSlot && g_d2dDCRenderTarget)
+            if (g_cardExitActive && slot == g_cardExitSlot && g_d2dRenderTarget)
             {
                 float opacity = GetCardExitOpacity();
                 cardExitLayer = AcquireD2DLayer(g_cardExitLayer);
@@ -5272,7 +6580,7 @@ static void PaintSelectorScene(HWND hwnd, HDC hdc)
                         D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
                         D2D1::Matrix3x2F::Identity(), opacity, nullptr,
                         D2D1_LAYER_OPTIONS_NONE);
-                    g_d2dDCRenderTarget->PushLayer(&layerParameters, cardExitLayer);
+                    g_d2dRenderTarget->PushLayer(&layerParameters, cardExitLayer);
                 }
             }
 
@@ -5281,7 +6589,6 @@ static void PaintSelectorScene(HWND hwnd, HDC hdc)
             RECT cardRect = GetSlotCardRect(slot);
             float radius = selected ? static_cast<float>(g_cardStyle.selectedCornerRadius) * g_uiScale.value
                                     : static_cast<float>(g_cardStyle.cornerRadius) * g_uiScale.value;
-            PaintBottomShadowD2D(cardRect, radius, selected ? 0.28f : 0.20f);
             if (selected && slot == GetCarouselCenterSlot())
                 PaintCenterAccentMarginD2D(cardRect, index, radius);
 
@@ -5306,19 +6613,19 @@ static void PaintSelectorScene(HWND hwnd, HDC hdc)
                 surfaceBrush->SetEndPoint(D2D1::Point2F(
                     static_cast<float>(cardRect.right),
                     static_cast<float>(cardRect.top) + cardHeight * 0.50f));
-                g_d2dDCRenderTarget->FillRoundedRectangle(&cr, surfaceBrush);
+                g_d2dRenderTarget->FillRoundedRectangle(&cr, surfaceBrush);
             }
             else
             {
                 g_d2dBrush->SetColor(bgCol);
-                g_d2dDCRenderTarget->FillRoundedRectangle(&cr, g_d2dBrush);
+                g_d2dRenderTarget->FillRoundedRectangle(&cr, g_d2dBrush);
             }
 
             D2D1_COLOR_F borderCol = selected
                 ? D2D1::ColorF(0.080f, 0.085f, 0.095f, 0.92f)
                 : D2D1::ColorF(0.035f, 0.040f, 0.050f, 0.82f);
             g_d2dBrush->SetColor(borderCol);
-            g_d2dDCRenderTarget->DrawRoundedRectangle(&cr, g_d2dBrush,
+            g_d2dRenderTarget->DrawRoundedRectangle(&cr, g_d2dBrush,
                                                       DpiPx(selected ? 1.5f : 1.0f));
 
             RECT prevRect = GetSlotPreviewRect(slot);
@@ -5333,7 +6640,7 @@ static void PaintSelectorScene(HWND hwnd, HDC hdc)
                 ? D2D1::ColorF(0.080f, 0.085f, 0.095f, 0.60f)
                 : D2D1::ColorF(0.035f, 0.040f, 0.050f, 0.50f);
             g_d2dBrush->SetColor(prevBorder);
-            g_d2dDCRenderTarget->DrawRoundedRectangle(&pr, g_d2dBrush, DpiPx(1.0f));
+            g_d2dRenderTarget->DrawRoundedRectangle(&pr, g_d2dBrush, DpiPx(1.0f));
 
             if (g_groups[index].representativeWindow &&
                 IsIconic(g_groups[index].representativeWindow) &&
@@ -5351,7 +6658,7 @@ static void PaintSelectorScene(HWND hwnd, HDC hdc)
                         static_cast<float>(cy),
                         static_cast<float>(cx + iconSize),
                         static_cast<float>(cy + iconSize));
-                    g_d2dDCRenderTarget->DrawBitmap(
+                    g_d2dRenderTarget->DrawBitmap(
                         g_groups[index].iconBitmap, &iconDest, 1.0f,
                         D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
                 }
@@ -5373,7 +6680,7 @@ static void PaintSelectorScene(HWND hwnd, HDC hdc)
                 g_d2dBrush->SetColor(D2D1::ColorF(
                     GetRValue(accent) / 255.0f, GetGValue(accent) / 255.0f,
                     GetBValue(accent) / 255.0f, 0.42f));
-                g_d2dDCRenderTarget->DrawRoundedRectangle(&hoverRect, g_d2dBrush, DpiPx(1.25f));
+                g_d2dRenderTarget->DrawRoundedRectangle(&hoverRect, g_d2dBrush, DpiPx(1.25f));
 
                 if (g_hoveredCloseButton)
                 {
@@ -5384,7 +6691,7 @@ static void PaintSelectorScene(HWND hwnd, HDC hdc)
                         cardMask ? AcquireD2DLayer(g_closeLayer) : nullptr;
                     if (cardMask && closeLayer)
                     {
-                        g_d2dDCRenderTarget->PushLayer(
+                        g_d2dRenderTarget->PushLayer(
                             D2D1::LayerParameters(D2D1::InfiniteRect(), cardMask), closeLayer);
                     }
                     if (closeBrush)
@@ -5401,11 +6708,11 @@ static void PaintSelectorScene(HWND hwnd, HDC hdc)
                                 static_cast<float>(closeRect.left + closeRect.right) * 0.5f,
                                 static_cast<float>(closeRect.top + closeRect.bottom) * 0.5f),
                             glowRadiusX, glowRadiusY);
-                        g_d2dDCRenderTarget->FillEllipse(&glowEllipse, closeBrush);
+                        g_d2dRenderTarget->FillEllipse(&glowEllipse, closeBrush);
                     }
                     if (closeLayer)
                     {
-                        g_d2dDCRenderTarget->PopLayer();
+                        g_d2dRenderTarget->PopLayer();
                     }
 
                     int buttonPad = ScaleLayoutPx(2.0f);
@@ -5418,9 +6725,9 @@ static void PaintSelectorScene(HWND hwnd, HDC hdc)
                     if (closeGeometry)
                     {
                         g_d2dBrush->SetColor(D2D1::ColorF(0.035f, 0.018f, 0.022f, 0.75f));
-                        g_d2dDCRenderTarget->FillGeometry(closeGeometry, g_d2dBrush);
+                        g_d2dRenderTarget->FillGeometry(closeGeometry, g_d2dBrush);
                         g_d2dBrush->SetColor(D2D1::ColorF(0.45f, 0.10f, 0.12f, 0.62f));
-                        g_d2dDCRenderTarget->DrawGeometry(closeGeometry, g_d2dBrush, DpiPx(1.0f));
+                        g_d2dRenderTarget->DrawGeometry(closeGeometry, g_d2dBrush, DpiPx(1.0f));
                     }
                 }
 
@@ -5434,21 +6741,21 @@ static void PaintSelectorScene(HWND hwnd, HDC hdc)
                         ? D2D1::ColorF(0.86f, 0.38f, 0.40f, 1.0f)
                         : D2D1::ColorF(0.62f, 0.24f, 0.25f, 0.92f));
                     const wchar_t closeGlyph[] = L"\x00D7";
-                    g_d2dDCRenderTarget->DrawText(closeGlyph, 1, g_dwriteCloseFormat,
+                    g_d2dRenderTarget->DrawText(closeGlyph, 1, g_dwriteCloseFormat,
                                                   &closeTextRect, g_d2dBrush);
                 }
             }
             if (cardExitLayer)
             {
-                g_d2dDCRenderTarget->PopLayer();
+                g_d2dRenderTarget->PopLayer();
             }
         }
 
-        if (g_selectionExpansionActive && g_d2dDCRenderTarget)
+        if (g_selectionExpansionActive && g_d2dRenderTarget)
         {
             // El rectángulo de expansión ya está expresado en coordenadas del
             // cliente ampliado, no en la escena original trasladada.
-            g_d2dDCRenderTarget->SetTransform(D2D1::Matrix3x2F::Identity());
+            g_d2dRenderTarget->SetTransform(baseTransform);
             const float p = g_selectionExpansionProgress;
             const float radius = std::max(0.0f, DpiPx(14.0f) * (1.0f - p));
             D2D1_ROUNDED_RECT expansionRect = D2D1::RoundedRect(
@@ -5459,7 +6766,7 @@ static void PaintSelectorScene(HWND hwnd, HDC hdc)
                 radius, radius);
             g_d2dBrush->SetColor(D2D1::ColorF(0.18f, 0.20f, 0.24f,
                                                0.70f * (1.0f - p) + 0.18f));
-            g_d2dDCRenderTarget->DrawRoundedRectangle(&expansionRect,
+            g_d2dRenderTarget->DrawRoundedRectangle(&expansionRect,
                                                        g_d2dBrush,
                                                        DpiPx(1.5f));
         }
@@ -5467,32 +6774,58 @@ static void PaintSelectorScene(HWND hwnd, HDC hdc)
             PaintCounterD2D();
         if (sceneOpacityLayer)
         {
-            g_d2dDCRenderTarget->PopLayer();
+            g_d2dRenderTarget->PopLayer();
         }
-        g_d2dDCRenderTarget->SetTransform(D2D1::Matrix3x2F::Identity());
-        g_d2dDCRenderTarget->PopAxisAlignedClip();
-        const HRESULT drawResult = g_d2dDCRenderTarget->EndDraw();
+        g_d2dRenderTarget->SetTransform(baseTransform);
+        g_d2dRenderTarget->PopAxisAlignedClip();
+        const HRESULT drawResult = g_d2dRenderTarget->EndDraw();
         if (drawResult == static_cast<HRESULT>(0x8899000C))  // D2DERR_RECREATE_TARGET
             ReleaseD2DDeviceResources();
+        else if (SUCCEEDED(drawResult))
+            presentScene();
+        return;
+    }
+
+    if (fullscreenBackdrop)
+    {
+        // Strict hardware-only policy: never switch Fullscreen back to GDI.
         return;
     }
 
     if (g_selectionExpansionActive)
     {
-        // If Direct2D is unavailable, black is transparent over the DWM glass
-        // surface extended across the entire selector client area. The DWM
-        // thumbnail remains composed above it.
-        HGDIOBJ stockBrush = LoadGdiFunctions() && g_getStockObject
-            ? g_getStockObject(BLACK_BRUSH) : nullptr;
-        HBRUSH glassClearBrush = reinterpret_cast<HBRUSH>(stockBrush);
-        if (glassClearBrush)
-            FillRect(hdc, &clientRect, glassClearBrush);
+        // Keep the selected fullscreen backdrop behind the expanding DWM
+        // thumbnail. For regular DWM mode, black remains transparent glass.
+        if (IsFullscreenBackdropActive())
+        {
+            if (!DrawFullscreenBackgroundGdi(hdc))
+                LogFullscreenHdcDrawFailure();
+        }
+        else
+        {
+            HGDIOBJ stockBrush = LoadGdiFunctions() && g_getStockObject
+                ? g_getStockObject(BLACK_BRUSH) : nullptr;
+            HBRUSH glassClearBrush = reinterpret_cast<HBRUSH>(stockBrush);
+            if (glassClearBrush)
+                FillRect(hdc, &clientRect, glassClearBrush);
+        }
         return;
     }
 
-    const bool hasVisualBackground =
-        g_baseBackgroundMode != BaseBackgroundMode::None ||
-        IsPatternWavesActive();
+    const bool fullscreenBackdropGdi = IsFullscreenBackdropActive();
+    int fullscreenGdiState = 0;
+    if (fullscreenBackdropGdi)
+    {
+        fullscreenGdiState = SaveDC(hdc);
+        if (!DrawFullscreenBackgroundGdi(hdc))
+            LogFullscreenHdcDrawFailure();
+        SetViewportOrgEx(hdc, g_selectorSceneOffset.x,
+                         g_selectorSceneOffset.y, nullptr);
+    }
+
+    const bool hasVisualBackground = !fullscreenBackdropGdi &&
+        (g_baseBackgroundMode != BaseBackgroundMode::None ||
+         IsPatternWavesActive());
     if (hasVisualBackground)
     {
         RECT containerShadow = {
@@ -5502,6 +6835,20 @@ static void PaintSelectorScene(HWND hwnd, HDC hdc)
             clientRect.bottom
         };
         PaintBottomShadowGDI(hdc, containerShadow, ScaleLayoutPx(12.0f));
+    }
+
+    // Todas las sombras antes que las cards (ver ruta Direct2D).
+    for (int slot = 0; slot < GetCarouselSlotCount(); ++slot)
+    {
+        if (ResolveGroupIndex(slot) < 0)
+            continue;
+        float shadowDist = fabsf(static_cast<float>(slot - GetCarouselCenterSlot()) + g_animOffset);
+        bool shadowSelected = (shadowDist < 0.5f);
+        int shadowRadius = shadowSelected
+            ? ScaleLayoutPx(static_cast<float>(g_cardStyle.selectedCornerRadius))
+            : ScaleLayoutPx(static_cast<float>(g_cardStyle.cornerRadius));
+        PaintCardShadowGDI(hdc, GetSlotCardRect(slot), shadowRadius,
+                           shadowSelected ? 0.65f : 0.50f);
     }
 
     for (int slot = 0; slot < GetCarouselSlotCount(); ++slot)
@@ -5514,7 +6861,6 @@ static void PaintSelectorScene(HWND hwnd, HDC hdc)
         RECT cardRect = GetSlotCardRect(slot);
         int radius = selected ? ScaleLayoutPx(static_cast<float>(g_cardStyle.selectedCornerRadius))
                               : ScaleLayoutPx(static_cast<float>(g_cardStyle.cornerRadius));
-        PaintBottomShadowGDI(hdc, cardRect, radius);
         DrawCardGlowAndBorderGDI(hdc, cardRect, radius, selected);
         PaintSlotHeaderGDI(hdc, slot, index, selected, dist);
         if (g_hoveredSlot == slot)
@@ -5562,6 +6908,8 @@ static void PaintSelectorScene(HWND hwnd, HDC hdc)
         }
     }
     PaintCounterGDI(hdc);
+    if (fullscreenGdiState)
+        RestoreDC(hdc, fullscreenGdiState);
 }
 
 static LRESULT CALLBACK SelectorWndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
@@ -5707,6 +7055,7 @@ static LRESULT CALLBACK SelectorWndProc(HWND hwnd, UINT message, WPARAM wParam, 
     {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
+        g_paintDirty = ps.rcPaint;
         PaintSelectorScene(hwnd, hdc);
         EndPaint(hwnd, &ps);
         return 0;
@@ -5772,6 +7121,7 @@ static void UnregisterSelectorClasses()
 }
 
 static HWND g_selectorRegionAppliedWindow = nullptr;
+static HWND g_selectorRegionClearedWindow = nullptr;
 static int g_selectorRegionAppliedWidth = 0;
 static int g_selectorRegionAppliedHeight = 0;
 static int g_selectorRegionAppliedRadius = 0;
@@ -5780,22 +7130,27 @@ static void UpdateSelectorSurfaceTransform()
 {
     if (!g_selector || !IsWindow(g_selector))
         return;
-    if (g_selectionExpansionActive)
+    if (g_selectionExpansionActive || IsFullscreenBackdropActive())
     {
-        // La expansión ocupa toda el área de trabajo; no redondear el HWND en
-        // esta fase porque la tarjeta debe llegar hasta los bordes de la pantalla.
-        SetWindowRgn(g_selector, nullptr, TRUE);
-        // SetWindowRgn(NULL) elimina la región, así que invalidar la caché
-        // para reaplicar las esquinas al volver al tamaño normal.
-        g_selectorRegionAppliedWindow = nullptr;
-        g_selectorRegionAppliedWidth = 0;
-        g_selectorRegionAppliedHeight = 0;
-        g_selectorRegionAppliedRadius = 0;
+        // El mismo HWND del selector cubre temporalmente el monitor para el blur
+        // y la expansión de selección; esas superficies deben quedar sin región.
+        if (g_selectorRegionClearedWindow != g_selector &&
+            SetWindowRgn(g_selector, nullptr, TRUE))
+        {
+            // SetWindowRgn(NULL) elimina la región; recordar el estado evita
+            // forzar una recomposición completa repetidamente durante frames.
+            g_selectorRegionClearedWindow = g_selector;
+            g_selectorRegionAppliedWindow = nullptr;
+            g_selectorRegionAppliedWidth = 0;
+            g_selectorRegionAppliedHeight = 0;
+            g_selectorRegionAppliedRadius = 0;
+        }
         return;
     }
 
-    // The selector HWND remains physically fixed. Opening/closing animations
-    // are rendered entirely by D2D; no separate blur surface is used.
+    // Fuera del modo fullscreen, el HWND conserva su geometría delimitada.
+    // La escena lógica permanece igual; el blur sólo cambia el viewport físico
+    // del mismo HWND y aplica una traslación a tarjetas, thumbnails e input.
     ApplySelectorRoundedRegion(g_selector);
 }
 
@@ -5826,6 +7181,7 @@ static void ApplySelectorRoundedRegion(HWND hwnd)
         return;
     if (SetWindowRgn(hwnd, region, TRUE))
     {
+        g_selectorRegionClearedWindow = nullptr;
         g_selectorRegionAppliedWindow = hwnd;
         g_selectorRegionAppliedWidth = width;
         g_selectorRegionAppliedHeight = height;
@@ -5922,7 +7278,26 @@ static bool CreateSelector(bool shiftHeld)
     SetWindowPos(g_selector, HWND_TOPMOST, x, y,
                  g_runtimeSelectorWidth, g_runtimeSelectorHeight,
                  SWP_NOACTIVATE | SWP_HIDEWINDOW);
-    ApplySelectorRoundedRegion(g_selector);
+    const RECT selectorScreenRect = { x, y, x + g_runtimeSelectorWidth,
+                                      y + g_runtimeSelectorHeight };
+    const bool fullscreenBackdropReady = PrepareFullscreenBackdrop(
+        monitorInfo.rcMonitor, selectorScreenRect);
+    if (fullscreenBackdropReady)
+    {
+        g_selectorSceneOffset = POINT{ g_blurredInitialRect.left,
+                                       g_blurredInitialRect.top };
+        SetWindowPos(g_selector, HWND_TOPMOST, monitorInfo.rcMonitor.left,
+                     monitorInfo.rcMonitor.top,
+                     monitorInfo.rcMonitor.right - monitorInfo.rcMonitor.left,
+                     monitorInfo.rcMonitor.bottom - monitorInfo.rcMonitor.top,
+                     SWP_NOACTIVATE | SWP_HIDEWINDOW);
+    }
+    else
+    {
+        HideFullscreenBackdrop(true);
+        g_selectorSceneOffset = POINT{};
+        ApplySelectorRoundedRegion(g_selector);
+    }
     ApplySelectorVisuals(g_selector);
     // RefreshWindowList coloca la ventana que estaba en foreground en índice 0.
     // La primera pulsación respeta Shift: Alt+Tab avanza y Alt+Shift+Tab
@@ -5974,12 +7349,31 @@ static void HideSelectorForSession()
     g_tabRepeatStarted = false;
     g_uiTabDown = false;
     g_backgroundSpotlightActive = false;
+    const bool wasFullscreen = IsFullscreenBackdropActive();
+    RECT restoreRect = {};
+    if (wasFullscreen)
+    {
+        restoreRect = RECT{
+            g_blurredMonitorRect.left + g_blurredInitialRect.left,
+            g_blurredMonitorRect.top + g_blurredInitialRect.top,
+            g_blurredMonitorRect.left + g_blurredInitialRect.right,
+            g_blurredMonitorRect.top + g_blurredInitialRect.bottom
+        };
+    }
+    HideFullscreenBackdrop(true);
 
     // No conservar superficies DWM registradas mientras el selector está oculto:
     // así ninguna miniatura puede sobrevivir visualmente al cierre. La siguiente
     // sesión las registra de nuevo mediante UpdateThumbnailSlots.
     UnregisterAllThumbnails();
     ShowWindow(g_selector, SW_HIDE);
+    if (wasFullscreen)
+    {
+        SetWindowPos(g_selector, HWND_TOPMOST, restoreRect.left, restoreRect.top,
+                     g_runtimeSelectorWidth, g_runtimeSelectorHeight,
+                     SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOREDRAW);
+        UnregisterAllThumbnails();
+    }
     if (g_selectorFocusTaken)
     {
         SetWindowLongPtrW(g_selector, GWL_EXSTYLE,
@@ -6002,6 +7396,8 @@ static void HideSelectorForSession()
     g_cardExitTarget = nullptr;
     g_selectionExpansionActive = false;
     g_selectionExpansionFinishPending = false;
+    g_selectionActivationRequested = false;
+    g_selectionActivationRequestTick = 0;
     g_selectionExpansionTarget = nullptr;
     g_selectionExpansionDestinationRect = {};
     g_selectionExpansionSceneOffset = {};
@@ -6040,6 +7436,7 @@ static void ShutdownPersistentSelector()
         DestroyWindow(selector);
     }
 
+    HideFullscreenBackdrop(true);
     ReleaseGroupResources();
     UnloadD2DAndDWrite();
     UnloadDwmFunctions();
@@ -6079,19 +7476,22 @@ static void UpdateCarouselAnimation(HWND)
     if (!g_animActive)
         return;
     const float progress = ElapsedFraction(g_animStartTime,
-                                           AnimationDuration(kNavigationDuration));
-    // Posición lógica continua. La salida exponencial normalizada arranca a
-    // máxima velocidad (sin el arranque lento de smoothstep) y llega a 0 sin
-    // overshoot. Como cada pulsación suma a la posición actual, la navegación
-    // interrumpida es continua en posición.
-    g_animOffset = g_animStartOffset * (1.0f - EaseOutExp(progress, 5.0f));
+                                           CardNavigationDuration());
+    // Card navigation has its own style, independent from selector/background
+    // opening and closing. Linear moves at constant velocity; Smooth uses a
+    // symmetric smoothstep curve (ease-in/ease-out) over the SAME duration.
+    // Neither style overshoots; Bouncy keeps its spring response.
+    const float eased = g_cardMotionStyle == CardMotionStyle::Bouncy
+        ? SpringOvershoot(progress)
+        : g_cardMotionStyle == CardMotionStyle::Linear
+            ? progress : EaseSmooth(progress);
+    g_animOffset = g_animStartOffset * (1.0f - eased);
 
-    // Snap de la card que llega al centro: se deriva de la distancia restante
-    // (no de un temporizador propio), por lo que siempre está sincronizado con
-    // el movimiento de las cards.
     const float remaining = fabsf(g_animOffset);
-    const float bump = Clamp01(1.0f - remaining / 0.30f);
-    g_cardSnapScale = 1.0f + 0.045f * sinf(bump * 3.14159265358979323846f);
+    const float bump = Clamp01(1.0f - remaining / 0.34f);
+    const float scaleAccent = g_cardMotionStyle == CardMotionStyle::Bouncy ? 0.045f
+                            : g_cardMotionStyle == CardMotionStyle::Smooth ? 0.025f : 0.0f;
+    g_cardSnapScale = 1.0f + scaleAccent * sinf(bump * 3.14159265358979323846f);
 
     if (progress >= 1.0f)
     {
@@ -6106,6 +7506,12 @@ static void UpdateCarouselAnimation(HWND)
 static void StartSlide(int steps)
 {
     if (steps == 0 || g_groups.empty())
+        return;
+
+    // With a single visible card there is nowhere to navigate. Ignore every
+    // navigation source (arrows, Tab/repeat, forwarded hotkeys and mouse wheel)
+    // so the lone card stays centered and no selection animation is triggered.
+    if (g_singleWindowCard && g_groups.size() == 1)
         return;
     // Solo se marca SelectionChange desde Open: no se toca la escena si la
     // apertura o el cierre están en curso.
@@ -6335,8 +7741,9 @@ static void ConfirmSelection()
         return;
     }
     const bool targetWasMinimized = IsIconic(target);
-    if (targetWasMinimized)
-        ShowWindowAsync(target, SW_RESTORE);
+    // No restaurar aquí: la ventana real podría empezar a aparecer detrás de
+    // la miniatura antes de que concluya la expansión. ActivateWindow la restaura
+    // cuando el selector ya cubre toda la pantalla.
     StartSelectionExpansion(target, targetWasMinimized);
 }
 
@@ -6427,6 +7834,8 @@ static void UiOpen(LONG sessionId, bool shiftHeld, bool fromHotkey)
     SetTimer(g_selector, kTabRepeatTimerId, kTabRepeatInitialDelayMs, nullptr);
 }
 
+static float GetCarouselDragSlotSpacing();
+
 static void UiHandleMouseMove()
 {
     InterlockedExchange(&g_mouseMovePending, 0);
@@ -6438,9 +7847,31 @@ static void UiHandleMouseMove()
     if (!IsSelectorActive() || !g_selector || !IsWindow(g_selector))
         return;
     ScreenToClient(g_selector, &pt);
+    pt.x -= g_selectorSceneOffset.x;
+    pt.y -= g_selectorSceneOffset.y;
     g_backgroundSpotlightPoint = pt;
-    RECT clientRect = {};
-    GetClientRect(g_selector, &clientRect);
+    if (g_mousePressActive && (GetAsyncKeyState(VK_LBUTTON) & 0x8000))
+    {
+        POINT screenPt = {};
+        screenPt.x = static_cast<LONG>(static_cast<ULONG>(static_cast<ULONG64>(packed) & 0xFFFFFFFFULL));
+        screenPt.y = static_cast<LONG>(static_cast<ULONG>((static_cast<ULONG64>(packed) >> 32) & 0xFFFFFFFFULL));
+        const int dx = screenPt.x - g_mousePressScreenPoint.x;
+        if (g_groups.size() > 1 && !g_singleWindowCard &&
+            (g_mouseDragging || std::abs(dx) >= 7))
+        {
+            g_mouseDragging = true;
+            const float spacing = GetCarouselDragSlotSpacing();
+            const float maxOffset = std::max(1.0f, static_cast<float>(g_groups.size() - 1));
+            g_animOffset = std::max(-maxOffset, std::min(maxOffset,
+                g_mousePressAnimOffset + static_cast<float>(dx) / spacing *
+                    (static_cast<float>(g_cardMotionSpeedPercent) / 100.0f)));
+            g_animStartOffset = g_animOffset;
+            g_cardSnapScale = 1.0f;
+            UpdateSelectorControls();
+            RequestFrame();
+        }
+    }
+    RECT clientRect = { 0, 0, g_runtimeSelectorWidth, g_runtimeSelectorHeight };
     g_backgroundSpotlightActive = PtInRect(&clientRect, pt) &&
                                    IsBackgroundSpotlightAllowed();
     UpdatePatternCursor(pt);
@@ -6458,46 +7889,146 @@ static void UiHandleMouseMove()
     MarkSelectorActivity();
 }
 
+static float GetCarouselDragSlotSpacing()
+{
+    const int center = GetCarouselCenterSlot();
+    if (center > 0)
+    {
+        RECT a = GetSlotCardRect(center - 1);
+        RECT b = GetSlotCardRect(center);
+        const float spacing = static_cast<float>(
+            ((b.left + b.right) - (a.left + a.right)) / 2.0);
+        if (spacing > 24.0f)
+            return spacing;
+    }
+    if (center + 1 < GetCarouselSlotCount())
+    {
+        RECT a = GetSlotCardRect(center);
+        RECT b = GetSlotCardRect(center + 1);
+        const float spacing = static_cast<float>(
+            ((b.left + b.right) - (a.left + a.right)) / 2.0);
+        if (spacing > 24.0f)
+            return spacing;
+    }
+    return 300.0f;
+}
+
+static void FinishMouseCarouselDrag()
+{
+    if (!g_mousePressActive)
+        return;
+
+    const bool dragged = g_mouseDragging;
+    const int pressedSlot = g_mousePressedSlot;
+    g_mousePressActive = false;
+    g_mouseDragging = false;
+    g_mousePressedSlot = -1;
+
+    if (dragged)
+    {
+        const int count = static_cast<int>(g_groups.size());
+        if (count <= 1 || g_singleWindowCard)
+        {
+            g_animOffset = 0.0f;
+            g_animActive = false;
+            g_cardSnapScale = 1.0f;
+        }
+        else
+        {
+            int steps = static_cast<int>(roundf(-g_animOffset));
+            // Avoid circling more than once during one gesture.
+            steps = std::max(-(count - 1), std::min(count - 1, steps));
+            g_selected = (g_mousePressSelected + steps) % count;
+            if (g_selected < 0)
+                g_selected += count;
+
+            // Rebase the dragged geometry to the newly selected logical item;
+            // the residual offset then eases back to the canonical carousel.
+            g_animStartOffset = g_animOffset + static_cast<float>(steps);
+            g_animOffset = g_animStartOffset;
+            g_animStartTime = FrameClockNow();
+            g_animActive = fabsf(g_animStartOffset) > 0.015f;
+            if (!g_animActive)
+            {
+                g_animOffset = 0.0f;
+                g_animStartOffset = 0.0f;
+                g_cardSnapScale = 1.0f;
+            }
+            UpdateSelectorControls();
+        }
+        RequestFrame();
+        return;
+    }
+
+    // A press that did not cross the drag threshold keeps the existing click
+    // behavior: close button, activate center card, or navigate to a side card.
+    if (pressedSlot < 0)
+        return;
+    if (pressedSlot == GetCarouselCenterSlot())
+        ConfirmSelection();
+    else
+        StartSlide(pressedSlot - GetCarouselCenterSlot());
+}
+
 static void UiHandleMouseButton(UINT message, POINT screenPt)
 {
     if (!IsSelectorActive() || !g_selector || !IsWindow(g_selector))
         return;
     MarkSelectorActivity();
 
-    RECT selRect = {};
-    GetWindowRect(g_selector, &selRect);
+    POINT scenePt = screenPt;
+    ScreenToClient(g_selector, &scenePt);
+    scenePt.x -= g_selectorSceneOffset.x;
+    scenePt.y -= g_selectorSceneOffset.y;
 
-    if (!PtInRect(&selRect, screenPt))
+    if (message == WM_LBUTTONUP)
     {
+        FinishMouseCarouselDrag();
+        return;
+    }
+    if (message != WM_LBUTTONDOWN)
+        return;
+
+    int clickedSlot = GetSlotAtPoint(scenePt);
+    bool onCloseButton = false;
+    if (clickedSlot < 0 && g_hoveredSlot >= 0 && g_hoveredCloseButton)
+    {
+        RECT hoveredClose = GetCloseHoverButtonRect(g_hoveredSlot);
+        if (PtInRect(&hoveredClose, scenePt))
+        {
+            clickedSlot = g_hoveredSlot;
+            onCloseButton = true;
+        }
+    }
+    if (clickedSlot < 0)
+    {
+        g_mousePressActive = false;
+        g_mouseDragging = false;
+        g_mousePressedSlot = -1;
         g_hoveredSlot = -1;
         g_hoveredCloseButton = false;
         CancelSelection();
         return;
     }
 
-    if (message == WM_LBUTTONDOWN)
+    RECT closeRect = GetCloseHoverButtonRect(clickedSlot);
+    if (onCloseButton ||
+        (g_hoveredSlot == clickedSlot && g_hoveredCloseButton &&
+         PtInRect(&closeRect, scenePt)))
     {
-        POINT clientPt = screenPt;
-        ScreenToClient(g_selector, &clientPt);
-        int clickedSlot = GetSlotAtPoint(clientPt);
-        if (clickedSlot >= 0)
-        {
-            RECT closeRect = GetCloseHoverButtonRect(clickedSlot);
-            if (g_hoveredSlot == clickedSlot && g_hoveredCloseButton &&
-                PtInRect(&closeRect, clientPt))
-            {
-                CloseWindowForSlot(clickedSlot);
-            }
-            else if (clickedSlot == GetCarouselCenterSlot())
-            {
-                ConfirmSelection();
-            }
-            else
-            {
-                StartSlide(clickedSlot - GetCarouselCenterSlot());
-            }
-        }
+        CloseWindowForSlot(clickedSlot);
+        return;
     }
+
+    // Defer click activation/navigation until release so a normal press can
+    // become a drag without accidentally activating the center window.
+    g_mousePressActive = true;
+    g_mouseDragging = false;
+    g_mousePressedSlot = clickedSlot;
+    g_mousePressScreenPoint = screenPt;
+    g_mousePressSelected = g_selected;
+    g_mousePressAnimOffset = g_animOffset;
+    g_animActive = false;
 }
 
 static void UiHandleSettingsChanged()
@@ -6755,9 +8286,18 @@ static LRESULT CALLBACK MouseHook(int nCode, WPARAM wParam, LPARAM lParam)
         return 1;
     }
 
-    if (wParam == WM_LBUTTONUP || wParam == WM_RBUTTONUP ||
-        wParam == WM_MBUTTONUP || wParam == WM_NCLBUTTONUP ||
-        wParam == WM_NCRBUTTONUP || wParam == WM_NCMBUTTONUP)
+    if (wParam == WM_LBUTTONUP)
+    {
+        LPARAM packedPt = MAKELPARAM(static_cast<WORD>(static_cast<short>(mouse->pt.x)),
+                                     static_cast<WORD>(static_cast<short>(mouse->pt.y)));
+        if (!PostUiCommand(WM_UI_MOUSE_BUTTON, WM_LBUTTONUP, packedPt))
+            return CallNextHookEx(g_mouseHook, nCode, wParam, lParam);
+        return 1;
+    }
+
+    if (wParam == WM_RBUTTONUP || wParam == WM_MBUTTONUP ||
+        wParam == WM_NCLBUTTONUP || wParam == WM_NCRBUTTONUP ||
+        wParam == WM_NCMBUTTONUP)
     {
         return 1;
     }
