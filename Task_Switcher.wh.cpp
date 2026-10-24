@@ -1,6 +1,6 @@
 // ==WindhawkMod==
-// @id              overhaulded-alt-tab-fork
-// @name            OverhauldedWin Alt+Tab - Fork
+// @id              overhaulded-alt-tab
+// @name            OverhauldedWin Alt+Tab
 // @description     Replaces the boring Windows Alt+Tab with a modern and elegant window switcher.
 // @version         1.4.0
 // @author          IMiloDev
